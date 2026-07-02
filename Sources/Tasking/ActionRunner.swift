@@ -26,7 +26,13 @@ public struct ActionFailure: Equatable, Sendable {
 /// The terminal outcome of an Action run through `ActionRunner`.
 public enum ActionOutcome<Success: Sendable>: Sendable {
     case succeeded(Success)
+
+    /// The operation threw `CancellationError`.
+    ///
+    /// This reflects the thrown error type. It does not require that the current
+    /// task was externally cancelled before the operation threw.
     case cancelled
+
     case skipped(ActionSkipReason)
     case failed(ActionFailure)
 }
@@ -88,7 +94,7 @@ public final class ActionRunner {
     /// This is a synchronous query. It does not drive SwiftUI redraws because
     /// `ActionRunner` is not Observable. UI state such as loading indicators
     /// should be owned by the ViewModel as its own state.
-    public func isRunning(_ id: ActionID) -> Bool {
+    public func isRunning(id: ActionID) -> Bool {
         runningRunsByActionID[id]?.isEmpty == false
     }
 

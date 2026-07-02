@@ -11,7 +11,7 @@ struct ActionRunnerTests {
         }
 
         #expect(outcome == .succeeded("saved"))
-        #expect(!runner.isRunning("save"))
+        #expect(!runner.isRunning(id: "save"))
     }
 
     @Test func reportsStartBeforeAwaitingOperation() async {
@@ -51,7 +51,7 @@ struct ActionRunnerTests {
 
         await gate.open()
         _ = await firstOutcome
-        #expect(!runner.isRunning("refresh"))
+        #expect(!runner.isRunning(id: "refresh"))
     }
 
     @Test func allowsConcurrentRunsWhenRequested() async {
@@ -80,7 +80,7 @@ struct ActionRunnerTests {
         await gate.open()
         #expect(await firstOutcome == .succeeded("first"))
         #expect(await secondOutcome == .succeeded("second"))
-        #expect(!runner.isRunning("refresh"))
+        #expect(!runner.isRunning(id: "refresh"))
     }
 
     @Test func mapsCancellationErrorToCancelledOutcome() async {
@@ -162,7 +162,7 @@ private actor AsyncGate {
 
 private extension ActionRunner {
     func waitUntilRunning(_ id: ActionID) async {
-        while !isRunning(id) {
+        while !isRunning(id: id) {
             await Task.yield()
         }
     }

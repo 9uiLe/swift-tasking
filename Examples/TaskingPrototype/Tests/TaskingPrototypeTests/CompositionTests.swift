@@ -43,12 +43,12 @@ import Tasking
                 recorder.record("inner-cancelled")
             }
         }
-        try await waitUntil { runner.isRunning("composite.inner") }
+        try await waitUntil { runner.isRunning(id: "composite.inner") }
 
         store.cancel(id: "composite")
         await gate.signal()
         try await waitUntil { recorder.count(of: "inner-cancelled") == 1 }
-        #expect(!runner.isRunning("composite.inner"))
+        #expect(!runner.isRunning(id: "composite.inner"))
     }
 
     /// F7: CancellationContext は task 境界を越えない。operation 内で新たな
