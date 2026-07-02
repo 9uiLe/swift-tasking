@@ -58,7 +58,7 @@ Design rationale and vocabulary live in [`docs/`](docs/README.md):
 
 ```swift
 // Add to Package.swift
-.package(url: "https://github.com/<owner>/swift-tasking.git", from: "0.1.0")
+.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.1.0")
 ```
 
 ```swift
