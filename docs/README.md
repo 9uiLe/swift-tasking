@@ -3,6 +3,7 @@
 - [用語集(Glossary)](glossary.md) — ドメイン語彙の定義と使い分け早見表
 - [ポジショニング](positioning.md) — 解決する問題・設計思想・競合比較・良い点と悪い点・公開運用方針
 - [ライフタイムの推奨構成](lifetimes.md) — store の所有位置で決まる lifetime の実効性と構成例
+- [レシピ集](recipes.md) — プロトタイプ検証で見つかった state/cancellation の定型と落とし穴
 
 ## Architecture Decision Records
 

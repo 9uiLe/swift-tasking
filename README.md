@@ -159,6 +159,26 @@ let lifetime: ActionLifetime = "accountSettings"
 viewTaskStore.cancel(lifetime: lifetime)
 ```
 
+## Operational notes
+
+- Running queries are tracking queries. `isRunning` and `runningCount` report
+  what Tasking is currently tracking; they do not prove that no cancelled work
+  is still executing. `cancel(id:)` and `cancel(lifetime:)` request cancellation
+  and remove runs from tracking immediately, so `.ignoreNew` does not guard
+  against old work that ignores cancellation after a manual cancel.
+- UI state belongs to the ViewModel. If a ViewModel sets loading state before
+  work begins, reset that state before rethrowing `CancellationError`.
+- With `.cancelExisting`, cleanup from the old run can arrive after the new run
+  has started. Guard cleanup with a generation token when both runs mutate the
+  same ViewModel state.
+- Do not create nested unstructured tasks inside an operation. `CancellationContext`
+  reflects the current task; escaping work into `Task {}` creates a new ownership
+  and cancellation boundary. Prefer `async let` or task groups for inner
+  concurrency.
+
+See [Recipes](docs/recipes.md) for the concrete patterns validated by the
+prototype tests.
+
 ## ActionRunner
 
 Use `ActionRunner` when you are already in an async context and want duplicate
@@ -198,6 +218,7 @@ caller's existing structured task.
 - Use `ViewTaskStore.start(...)` for synchronous user-action callbacks.
 - Keep `Task.detached` out of feature code unless the work intentionally should
   not inherit actor, priority, task-local values, or cancellation context.
+- Keep nested `Task {}` out of Tasking operations; use structured child work.
 - Make action IDs constants, not scattered string literals.
 - Treat cancellation as a request. Long-running ViewModel methods should accept
   `CancellationContext` and call `try cancellation.check()` before expensive

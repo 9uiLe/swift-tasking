@@ -19,6 +19,17 @@ Action の「1 回の具体的な実行」。同じ ActionID の実行が複数�
 (`allowConcurrent`)、実行ごとに UUID ベースの ActionRunID で区別する。
 ActionID が「何をするか」、ActionRunID が「どの実行か」。
 
+### 追跡中(Tracked) / 実行中(Executing)
+Tasking の `isRunning` / `runningCount` が答えるのは「追跡中かどうか」であり、
+処理本体が実行中かどうかを OS レベルで保証するものではない。`cancel(id:)` や
+`cancel(lifetime:)` はキャンセルを要求したうえで追跡を即時解除するため、
+協調しない処理は `isRunning == false` の後も実行を続け得る。
+
+この区別は `.ignoreNew` の理解に重要である。手動キャンセル後は追跡が消えるため、
+古い処理がまだ実行中でも同じ ActionID の新しい `start(..., policy: .ignoreNew)` は
+開始され得る。表示状態や「実処理が残っているか」の判断は ViewModel 側の state /
+世代管理で扱う。
+
 ### 所有(Ownership)
 unstructured task のハンドル(`Task` 値)への参照を保持し、キャンセル・生存確認・
 破棄時の後始末に責任を持つこと。構造化並行性では task tree が自動で行うが、
