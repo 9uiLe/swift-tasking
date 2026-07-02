@@ -16,6 +16,16 @@ task の所有権を明示するライブラリが、自身のデータ競合安
   `@MainActor @Sendable` で受ける。
 - 対応 OS は concurrency が back-deploy される下限(iOS 13+ / macOS 10.15+)まで広げる。
 
+## 補足: Swift 5 言語モードの消費側
+
+パッケージ自体は Swift 6 language mode でビルドされるが、SwiftPM の依存として
+Swift 5 language mode の target から import できる場合がある。この場合でも、
+operation クロージャの capture は消費側 target の言語モードで検査される。
+
+したがって Swift 5 target では、非 Sendable object の capture が警告なしに通ることがあり、
+Tasking の strict concurrency 前提は保てない。Tasking を使う feature module は Swift 6
+language mode に上げることをサポート境界とする。
+
 ## 根拠
 
 - README の言葉: 「task 所有権を明示するパッケージなので、strict data-race

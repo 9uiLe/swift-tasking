@@ -134,9 +134,9 @@ Tasking はそれを推奨する側に立つ。
 - **CancellationContext は慣習でしか守られない**: 誰でも `CancellationContext()`
   を作れるため、契約の実効性はチーム規律に依存する(ADR-0002 の代償)。
 - **順序保証がない**: `allowConcurrent` の並行実行間の順序・整合はアプリ側の責任。
-- **運用面の未整備(公開ブロッカー)**: LICENSE ファイルなし、CI なし、
-  パッケージ名 `TaskRunner`・プロダクト名 `Tasking`・リポジトリ名 `task-runner` の
-  三重名称、doc コメント(日本語)と README(英語)の言語不一致。
+- **運用面の整備コスト**: 公開準備で LICENSE、CI、名称統一(`swift-tasking` /
+  product `Tasking`)、API doc コメント英語化、tag 運用が必要になった。
+  これらは公開前タスクとして順次解消する。
 
 ## 6. 公開・運用方針(2026-07-03 グリリングで確定)
 

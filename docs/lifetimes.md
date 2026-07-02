@@ -22,6 +22,12 @@
 | `.appBound` | アプリ寿命のコンテナ(下記例) | プロセス生存中は生存。`ScenePhase` 等での明示キャンセルは利用者判断 |
 | カスタム(`"accountSettings"` 等) | 上記いずれかの共有 store 内の一括キャンセル単位 | `cancel(lifetime: "accountSettings")` |
 
+`.appBound` は background execution の保証ではない。アプリが suspend されれば task も
+進行できない。background での完遂が必要な処理は `beginBackgroundTask`、
+`BGTaskScheduler` / `BGProcessingTask`、background `URLSession` など、
+用途に合う OS API をアプリ側で使う。Tasking はそれらの代替ではなく、Action の
+所有位置と方針を見えるようにするだけである。
+
 ## screenBound — 画面所有(基本形)
 
 ```swift
@@ -104,6 +110,9 @@ identity が分かれるため、store も自然にシーン単位になる。
 
 - **画面所有の store に `.appBound`** — 宣言はレビュー上「アプリ寿命の意図」を
   主張するのに、実際は画面と共に死ぬ。意図があるなら store の所有位置を変える。
+- **`.appBound` を background 実行保証として扱う** — store がアプリ寿命でも
+  OS の background 制限は超えられない。background 完遂が必要なら OS の
+  background API を使う。
 - **アプリ所有の共有 store に複数画面が `.screenBound` を入れる** —
   `cancel(lifetime: .screenBound)` が全画面分を巻き込む。共有 store では
   機能固有のカスタムタグを使う。

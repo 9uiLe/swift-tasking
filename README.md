@@ -1,5 +1,7 @@
 # swift-tasking / Tasking
 
+[![CI](https://github.com/9uiLe/swift-tasking/actions/workflows/ci.yml/badge.svg)](https://github.com/9uiLe/swift-tasking/actions/workflows/ci.yml)
+
 `Tasking` is a small Swift package for making unstructured task ownership
 explicit at UI and application boundaries.
 
@@ -47,6 +49,8 @@ Design rationale and vocabulary live in [`docs/`](docs/README.md):
 - [Positioning](docs/positioning.md) — problem statement, design principles, comparison
   with alternatives (SwiftUI `.task(id:)`, VergeGroup TaskManager, TCA, async-task),
   and an honest strengths/weaknesses assessment
+- [Adoption Guide](docs/adoption.md) — large-app adoption policy, ActionID governance,
+  Swift 5 language-mode caveat, and 0.2 roadmap
 - [Architecture Decision Records](docs/README.md#architecture-decision-records) —
   why the API is shaped the way it is
 
@@ -82,6 +86,12 @@ Supported Apple deployment targets:
 Swift 5 language mode is intentionally not supported. This package is about
 making Swift Concurrency task ownership explicit, so strict data-race checking
 is part of the public quality bar.
+
+Swift 5 language-mode targets may be able to import the package, but their
+closure captures are checked under the consuming target's language mode. In
+practice, non-Sendable captures that Swift 6 would reject can compile silently
+from Swift 5 targets. Treat Swift 6 language mode in consuming feature modules
+as part of the support boundary.
 
 ## ViewTaskStore
 
