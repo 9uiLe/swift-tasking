@@ -1,4 +1,4 @@
-# TaskRunner / Tasking
+# swift-tasking / Tasking
 
 `Tasking` is a small Swift package for making unstructured task ownership
 explicit at UI and application boundaries.
@@ -43,11 +43,11 @@ Primary references:
 
 ```swift
 // Package.swift に追加
-.package(url: "https://github.com/<owner>/task-runner.git", from: "0.1.0")
+.package(url: "https://github.com/<owner>/swift-tasking.git", from: "0.1.0")
 ```
 
 ```swift
-.product(name: "Tasking", package: "task-runner")
+.product(name: "Tasking", package: "swift-tasking")
 ```
 
 ```swift

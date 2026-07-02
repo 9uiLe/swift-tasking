@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "TaskRunner",
+    name: "swift-tasking",
     platforms: [
         .iOS(.v13),
         .macOS(.v10_15),
