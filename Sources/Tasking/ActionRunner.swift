@@ -83,10 +83,20 @@ public final class ActionRunner {
         }
     }
 
+    /// Returns whether any run with the given Action ID is currently tracked.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ActionRunner` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func isRunning(_ id: ActionID) -> Bool {
         runningRunsByActionID[id]?.isEmpty == false
     }
 
+    /// Returns the number of currently tracked runs with the given Action ID.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ActionRunner` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func runningCount(for id: ActionID) -> Int {
         runningRunsByActionID[id]?.count ?? 0
     }

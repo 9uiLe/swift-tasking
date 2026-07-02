@@ -158,22 +158,47 @@ public final class ViewTaskStore {
         runIDsByActionID.removeAll()
     }
 
+    /// Returns whether any run with the given Action ID is currently tracked.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ViewTaskStore` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func isRunning(id: ActionID) -> Bool {
         runIDsByActionID[id]?.isEmpty == false
     }
 
+    /// Returns whether the given Action run is currently tracked.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ViewTaskStore` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func isRunning(_ run: ActionRun) -> Bool {
         tasksByRunID[run.runID] != nil
     }
 
+    /// Returns whether any run with the given lifetime is currently tracked.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ViewTaskStore` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func isRunning(lifetime: ActionLifetime) -> Bool {
         tasksByRunID.values.contains { $0.lifetime == lifetime }
     }
 
+    /// Returns the number of currently tracked runs with the given Action ID.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ViewTaskStore` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func runningCount(for id: ActionID) -> Int {
         runIDsByActionID[id]?.count ?? 0
     }
 
+    /// Returns the number of currently tracked runs with the given lifetime.
+    ///
+    /// This is a synchronous query. It does not drive SwiftUI redraws because
+    /// `ViewTaskStore` is not Observable. UI state such as loading indicators
+    /// should be owned by the ViewModel as its own state.
     public func runningCount(lifetime: ActionLifetime) -> Int {
         tasksByRunID.values.filter { $0.lifetime == lifetime }.count
     }
