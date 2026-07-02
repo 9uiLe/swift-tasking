@@ -1,0 +1,193 @@
+# TaskRunner / Tasking
+
+`Tasking` is a small Swift package for making unstructured task ownership
+explicit at UI and application boundaries.
+
+It provides two deliberately separate types:
+
+- `ViewTaskStore`: owns task handles started from synchronous UI callbacks such as
+  `Button` actions, and makes lifetime plus duplicate policy visible.
+- `ActionRunner`: runs work in an existing async context, tracks action state,
+  and returns a typed outcome without creating a task.
+
+The package is intentionally not a replacement for structured concurrency. Use
+`async let`, task groups, and SwiftUI `.task` whenever their scope matches the
+work. Use `ViewTaskStore` only when work must outlive a synchronous callback and
+therefore needs explicit ownership.
+
+## Why this exists
+
+Apple's Swift concurrency guidance draws a strong line between structured tasks
+and unstructured tasks:
+
+- Structured tasks (`async let` and task groups) live inside a scope and get
+  automatic cancellation/error bookkeeping from the task tree.
+- `Task {}` and `Task.detached {}` are unstructured. They are useful at
+  non-async boundaries, but cancellation, errors, results, and lifetime must be
+  managed explicitly.
+- Cancellation is cooperative. Calling `cancel()` requests cancellation; the
+  running operation must check cancellation or call APIs that react to it.
+- SwiftUI `.task` is already view-lifetime-bound and automatically cancelled
+  when the view disappears, so it should remain the preferred tool for lifecycle
+  loading.
+
+Primary references:
+
+- [WWDC21: Explore structured concurrency in Swift](https://developer.apple.com/videos/play/wwdc2021/10134/)
+- [WWDC23: Beyond the basics of structured concurrency](https://developer.apple.com/videos/play/wwdc2023/10170/)
+- [WWDC21: What's new in SwiftUI](https://developer.apple.com/videos/play/wwdc2021/10018/)
+- [Task.cancel() documentation](https://developer.apple.com/documentation/swift/task/cancel%28%29)
+- [SwiftUI View.task documentation](https://developer.apple.com/documentation/swiftui/view/task%28name%3Apriority%3Afile%3Aline%3A_%3A%29)
+
+## Installation
+
+```swift
+// Package.swift に追加
+.package(url: "https://github.com/<owner>/task-runner.git", from: "0.1.0")
+```
+
+```swift
+.product(name: "Tasking", package: "task-runner")
+```
+
+```swift
+import Tasking
+```
+
+## Support Policy
+
+Tasking requires the Swift 6 toolchain and compiles in Swift 6 language mode.
+The package manifest uses Swift tools version 6.0 so clients do not need a newer
+SwiftPM just to load the package.
+
+Supported Apple deployment targets:
+
+- iOS 13+
+- macOS 10.15+
+- tvOS 13+
+- watchOS 6+
+- visionOS 1+
+
+Swift 5 language mode is intentionally not supported. This package is about
+making Swift Concurrency task ownership explicit, so strict data-race checking
+is part of the public quality bar.
+
+## ViewTaskStore
+
+Use `ViewTaskStore` at synchronous UI boundaries where `await` is not available.
+
+```swift
+import SwiftUI
+import Tasking
+
+private enum SettingsActions {
+    static let save: ActionID = "settings.save"
+}
+
+struct SettingsScreen: View {
+    @State private var viewTaskStore = ViewTaskStore()
+    @State private var viewModel = SettingsViewModel()
+
+    var body: some View {
+        Button("Save") {
+            viewTaskStore.start(
+                id: SettingsActions.save,
+                lifetime: .screenBound,
+                policy: .ignoreNew
+            ) { cancellation in
+                try await viewModel.save(cancellation: cancellation)
+            }
+        }
+        .onDisappear {
+            viewTaskStore.cancel(lifetime: .screenBound)
+        }
+    }
+}
+```
+
+`TaskStartPolicy` makes duplicate behavior local and reviewable:
+
+- `.ignoreNew`: keep the current run and skip the new request.
+- `.cancelExisting`: request cancellation for current runs, then start a new
+  run. The cancelled operation may continue until it cooperates with
+  cancellation.
+- `.allowConcurrent`: track multiple overlapping runs for the same action ID.
+
+`ViewTaskStore.start` passes a `CancellationContext` into the operation. Pass it
+to the ViewModel method and call `try cancellation.check()` in long-running work
+so cancellation requests are handled deliberately.
+
+```swift
+@MainActor
+final class SettingsViewModel {
+    func save(cancellation: CancellationContext) async throws {
+        do {
+            try cancellation.check()
+            try await settingsUseCase.save()
+            try cancellation.check()
+            state = .saved
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            state = .failed(error)
+        }
+    }
+}
+```
+
+Business errors should be converted to ViewModel state before they leave the
+operation. `ViewTaskStore` treats `CancellationError` as a normal cancellation;
+other uncaught errors are considered programming mistakes and trigger a debug
+assertion.
+
+`ActionLifetime` has built-in `.screenBound`, `.sceneBound`, and `.appBound`
+values, and it can be extended with string literals:
+
+```swift
+let lifetime: ActionLifetime = "accountSettings"
+viewTaskStore.cancel(lifetime: lifetime)
+```
+
+## ActionRunner
+
+Use `ActionRunner` when you are already in an async context and want duplicate
+handling plus a typed terminal result.
+
+```swift
+let runner = ActionRunner()
+
+let outcome = await runner.run(ActionDescriptor(id: "billing.refresh")) { cancellation in
+    try cancellation.check()
+    try await billingUseCase.refresh()
+    try cancellation.check()
+}
+
+switch outcome {
+case .succeeded:
+    break
+case .cancelled:
+    break
+case .skipped(.alreadyRunning):
+    break
+case let .failed(error):
+    logger.error("\(error.typeName): \(error.message)")
+}
+```
+
+`ActionRunner` also passes `CancellationContext` to the operation, but it does
+not own or cancel a task. It only lets the current task's cancellation state be
+checked explicitly while it manages duplicate policy and outcome mapping. Keep
+cancellation ownership in `ViewTaskStore`, SwiftUI `.task`, task groups, or the
+caller's existing structured task.
+
+## Design rules
+
+- Prefer structured concurrency first.
+- Use SwiftUI `.task` for view lifecycle work.
+- Use `ViewTaskStore.start(...)` for synchronous user-action callbacks.
+- Keep `Task.detached` out of feature code unless the work intentionally should
+  not inherit actor, priority, task-local values, or cancellation context.
+- Make action IDs constants, not scattered string literals.
+- Treat cancellation as a request. Long-running ViewModel methods should accept
+  `CancellationContext` and call `try cancellation.check()` before expensive
+  work and after important suspension points.
