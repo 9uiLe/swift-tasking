@@ -1,13 +1,13 @@
-/// `ActionRunner` 経由で実行するアクションの重複実行ポリシー。
+/// The duplicate policy for Actions run through `ActionRunner`.
 public enum ActionDuplicatePolicy: Equatable, Sendable {
-    /// 同じ `ActionID` の実行中は新しい実行を拒否します。
+    /// Reject a new run while the same `ActionID` is running.
     case rejectWhileRunning
 
-    /// 同じ `ActionID` の複数実行が重なることを許可します。
+    /// Allow multiple runs with the same `ActionID` to overlap.
     case allowConcurrent
 }
 
-/// アクションが生成したエラーを `Sendable` かつ比較可能な形で表した値。
+/// A `Sendable` and comparable value that represents an error produced by an Action.
 public struct ActionFailure: Equatable, Sendable {
     public let typeName: String
     public let message: String
@@ -23,7 +23,7 @@ public struct ActionFailure: Equatable, Sendable {
     }
 }
 
-/// `ActionRunner` 経由で実行したアクションの最終結果。
+/// The terminal outcome of an Action run through `ActionRunner`.
 public enum ActionOutcome<Success: Sendable>: Sendable {
     case succeeded(Success)
     case cancelled
@@ -33,7 +33,7 @@ public enum ActionOutcome<Success: Sendable>: Sendable {
 
 extension ActionOutcome: Equatable where Success: Equatable {}
 
-/// 1 つのアクションに対する静的な設定。
+/// Static configuration for one Action.
 public struct ActionDescriptor: Equatable, Sendable {
     public let id: ActionID
     public let duplicatePolicy: ActionDuplicatePolicy
@@ -47,11 +47,11 @@ public struct ActionDescriptor: Equatable, Sendable {
     }
 }
 
-/// 既存の async 文脈でアクションを実行し、アクション状態を一元管理します。
+/// Runs Actions in an existing async context and centrally manages Action state.
 ///
-/// `ActionRunner` は task を作成せず、所有もしません。すでに async 文脈にいて、
-/// 重複実行制御と型付きの最終結果が必要な場合に使います。
-/// unstructured task のハンドル所有という別責務には `ViewTaskStore` を使います。
+/// `ActionRunner` does not create or own tasks. Use it when you are already in an
+/// async context and need duplicate control plus a typed terminal outcome.
+/// Use `ViewTaskStore` for the separate responsibility of owning unstructured task handles.
 @MainActor
 public final class ActionRunner {
     private var runningRunsByActionID: [ActionID: Set<ActionRunID>] = [:]

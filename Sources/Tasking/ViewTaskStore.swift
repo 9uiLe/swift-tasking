@@ -1,7 +1,7 @@
-/// `ViewTaskStore` が所有する task の論理的なライフタイム。
+/// A logical lifetime for tasks owned by `ViewTaskStore`.
 ///
-/// 組み込み値は一般的な UI 所有スコープを表します。
-/// たとえば `"accountSettings"` のように、機能固有のスコープも定義できます。
+/// Built-in values represent common UI ownership scopes.
+/// You can also define feature-specific scopes such as `"accountSettings"`.
 public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
     public static let screenBound = ActionLifetime("screenBound")
     public static let sceneBound = ActionLifetime("sceneBound")
@@ -26,19 +26,18 @@ public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleB
     }
 }
 
-/// 同じ `ActionID` の task がすでに追跡中の場合の開始ポリシー。
+/// The start policy used when a task with the same `ActionID` is already being tracked.
 public enum TaskStartPolicy: Equatable, Sendable {
-    /// 既存の task を維持し、新しい要求をスキップします。
+    /// Keep the existing task and skip the new request.
     case ignoreNew
 
-    /// 同じアクションとして追跡中の task をキャンセルしてから開始します。
+    /// Cancel tasks tracked as the same Action, then start the new request.
     ///
-    /// キャンセルは協調的です。古い処理がキャンセルを無視する場合、store が
-    /// 重複判定上は実行中として扱わなくなった後も、その処理自体は継続する
-    /// 可能性があります。
+    /// Cancellation is cooperative. If old work ignores cancellation, it may continue
+    /// after the store has stopped treating it as running for duplicate-policy decisions.
     case cancelExisting
 
-    /// 同じ action ID の task を追加で開始します。
+    /// Start an additional task with the same Action ID.
     case allowConcurrent
 }
 
@@ -61,11 +60,11 @@ public enum TaskStartOutcome: Equatable, Sendable {
     }
 }
 
-/// View の同期 UI コールバックから作成された unstructured task のハンドルを所有します。
+/// Owns handles for unstructured tasks created from synchronous UI callbacks on a View.
 ///
-/// `ViewTaskStore` は SwiftUI view に所有されることを主な用途としているため、
-/// `@MainActor` です。
-/// task の所有者、ライフタイム、重複実行ポリシーを呼び出し箇所で明示できます。
+/// `ViewTaskStore` is `@MainActor` because it is primarily intended to be owned by
+/// SwiftUI views.
+/// It makes the task owner, lifetime, and duplicate policy explicit at the call site.
 @MainActor
 public final class ViewTaskStore {
     private var tasksByRunID: [ActionRunID: ManagedTask] = [:]
@@ -79,12 +78,13 @@ public final class ViewTaskStore {
         }
     }
 
-    /// ViewModel の async メソッドを unstructured task として開始します。
+    /// Starts a ViewModel async method as an unstructured task.
     ///
-    /// operation には `CancellationContext` が渡されます。長い処理では
-    /// `try cancellation.check()` を呼び、キャンセル要求に協調してください。
-    /// `CancellationError` は通常終了として扱います。その他のエラーは ViewModel 側で
-    /// state に変換することを想定しており、漏れた場合は debug assertion で検出します。
+    /// The operation receives a `CancellationContext`. In long-running work, call
+    /// `try cancellation.check()` to cooperate with cancellation requests.
+    /// `CancellationError` is treated as normal termination. Other errors are expected
+    /// to be converted into ViewModel state before escaping; escaped errors are detected
+    /// with a debug assertion.
     @discardableResult
     public func start(
         id: ActionID,
