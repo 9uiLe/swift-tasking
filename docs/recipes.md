@@ -72,9 +72,6 @@ final class SearchViewModel {
                 results = newResults
             }
         } catch let error as CancellationError {
-            if generation == currentGeneration {
-                isSearching = false
-            }
             throw error
         }
     }
@@ -126,6 +123,36 @@ viewTaskStore.start(id: "sync", lifetime: .screenBound) { cancellation in
     try cancellation.check()
 }
 ```
+
+## operation から store owner を強参照しない
+
+`ViewTaskStore` は task handle を保持し、その task は operation クロージャを保持する。
+operation が store 自身、または store を所有する ViewModel / coordinator を強参照すると、
+`store -> task -> operation -> store owner -> store` の一時循環ができる。
+
+この循環中は view の `@State` や外部参照が切れても store が解放されないため、`deinit` による
+全 task キャンセルの安全網は operation 完了まで発火しない。`onDisappear` などで明示的に
+`cancel(...)` していれば影響は限定されるが、deinit 安全網だけに依存する構成では危険になる。
+
+```swift
+@MainActor
+final class StoreOwningViewModel {
+    let store = ViewTaskStore()
+    private let syncUseCase = SyncUseCase()
+
+    func startSync() {
+        store.start(id: "sync", lifetime: .screenBound) { [weak self] cancellation in
+            guard let self else { return }
+            try cancellation.check()
+            try await syncUseCase.sync()
+            try cancellation.check()
+        }
+    }
+}
+```
+
+operation が owner に触らなくてよいなら、そもそも owner を capture しない形にする。
+owner に触る必要がある場合は weak capture と明示 cancel を併用する。
 
 ## 同じ ActionID の方針を分散させない
 

@@ -171,6 +171,11 @@ viewTaskStore.cancel(lifetime: lifetime)
 - With `.cancelExisting`, cleanup from the old run can arrive after the new run
   has started. Guard cleanup with a generation token when both runs mutate the
   same ViewModel state.
+- Do not let an operation strongly capture its `ViewTaskStore` or an object that
+  owns that store. The cycle `store -> task -> operation -> store` prevents the
+  store's deinit cancellation safety net from running until the operation
+  finishes. Use explicit `cancel(...)` and weak captures when the operation
+  needs to call back into an owner.
 - Do not create nested unstructured tasks inside an operation. `CancellationContext`
   reflects the current task; escaping work into `Task {}` creates a new ownership
   and cancellation boundary. Prefer `async let` or task groups for inner

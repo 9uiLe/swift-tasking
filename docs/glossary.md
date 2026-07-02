@@ -25,7 +25,7 @@ Tasking の `isRunning` / `runningCount` が答えるのは「追跡中かどう
 `cancel(lifetime:)` はキャンセルを要求したうえで追跡を即時解除するため、
 協調しない処理は `isRunning == false` の後も実行を続け得る。
 
-この区別は `.ignoreNew` の理解に重要である。手動キャンセル後は追跡が消えるため、
+この区別は `.ignoreNew` の理解に重要である(ADR-0009)。手動キャンセル後は追跡が消えるため、
 古い処理がまだ実行中でも同じ ActionID の新しい `start(..., policy: .ignoreNew)` は
 開始され得る。表示状態や「実処理が残っているか」の判断は ViewModel 側の state /
 世代管理で扱う。

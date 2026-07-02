@@ -107,6 +107,8 @@ public final class ViewTaskStore {
         }
 
         let run = ActionRun(actionID: id)
+        // Keep this weak capture. A strong capture would make the task retain the store,
+        // which disables the deinit cancellation safety net until the operation finishes.
         let handle = Task(priority: priority) { @MainActor [weak self] in
             defer {
                 self?.finish(run)
