@@ -39,10 +39,21 @@ Primary references:
 - [Task.cancel() documentation](https://developer.apple.com/documentation/swift/task/cancel%28%29)
 - [SwiftUI View.task documentation](https://developer.apple.com/documentation/swiftui/view/task%28name%3Apriority%3Afile%3Aline%3A_%3A%29)
 
+## Documentation
+
+Design rationale and vocabulary live in [`docs/`](docs/README.md):
+
+- [Glossary](docs/glossary.md) — domain vocabulary and a quick "which tool when" table
+- [Positioning](docs/positioning.md) — problem statement, design principles, comparison
+  with alternatives (SwiftUI `.task(id:)`, VergeGroup TaskManager, TCA, async-task),
+  and an honest strengths/weaknesses assessment
+- [Architecture Decision Records](docs/README.md#architecture-decision-records) —
+  why the API is shaped the way it is
+
 ## Installation
 
 ```swift
-// Package.swift に追加
+// Add to Package.swift
 .package(url: "https://github.com/<owner>/swift-tasking.git", from: "0.1.0")
 ```
 
