@@ -13,7 +13,10 @@ import Tasking
         let gate = Signal()
         let recorder = Recorder()
         var store: ViewTaskStore? = ViewTaskStore()
-        weak let weakStore = store
+        // weak let は Swift 6.2+ のため、旧ツールチェーン(CI の Xcode 16.4)互換で
+        // var + 形式的 mutation にする。
+        weak var weakStore = store
+        defer { weakStore = nil }
 
         // ありがちな書き方: operation の中で store(や store を持つ VM)を触る
         store!.start(id: "cyclic", lifetime: .screenBound) { [store] _ in
