@@ -154,6 +154,118 @@ final class StoreOwningViewModel {
 operation が owner に触らなくてよいなら、そもそも owner を capture しない形にする。
 owner に触る必要がある場合は weak capture と明示 cancel を併用する。
 
+このレシピが警告しているのは **operation クロージャ**からの強参照である。
+Environment 等に格納される同期ハンドラ closure が store を強参照するのは問題ない。
+ハンドラは `store -> task -> operation` の連鎖に入らないため、循環を作らない。
+循環になるのは operation が store owner を capture する場合のみである。
+
+```swift
+private enum AppActions {
+    static let privacyOptions: ActionID = "app.privacyOptions"
+}
+
+// 問題ない: ハンドラ closure は operation ではないので循環に入らない
+let handler = PrivacyOptionsHandler { [taskStore, repository] in
+    taskStore.start(
+        id: AppActions.privacyOptions,
+        lifetime: .appBound,
+        policy: .ignoreNew
+    ) { _ in
+        await repository.presentPrivacyOptions()
+    }
+}
+```
+
+## システムダイアログを出す work を scene-phase 連動の構造化スコープに置かない
+
+App Tracking Transparency (ATT) のようなシステムダイアログは、表示自体が
+`scenePhase` を `.inactive` に変える。この種の work を `.task(id: scenePhase)` のような
+scene-phase 連動の構造化スコープに置くと、ダイアログ表示が自分自身の task をキャンセルする。
+
+これは README の「スコープが合う structured を先に検討する」方針の反例であり、事前に
+「スコープが合わない」と分かる具体例である。この場合は appBound の `ViewTaskStore` に
+明示所有させる。composition root で scenePhase を見て起動する形は、
+[lifetimes.md](lifetimes.md) の「appBound — アプリ寿命のコンテナ所有」節を参照する。
+
+## 既存の非 throwing ViewModel API に CancellationContext を後付けする
+
+エラーを UI state に変換する非 throwing の ViewModel メソッドでは、
+`try cancellation.check()` より `cancellation.isCancelled` による早期 return を推奨する。
+throwing の `check()` を使うと、`CancellationError` をビジネスエラーと区別するための
+`do` / `catch` が各メソッドに増える。`if cancellation.isCancelled { return }` なら、
+boilerplate なしで「キャンセルは正常系、state を汚さない」を表現できる。
+
+使い分けは単純である。throwing メソッドでは既存レシピどおり `try cancellation.check()` を使う。
+非 throwing メソッドでは `cancellation.isCancelled` で早期 return する。
+ただし、呼び出し先 API が `CancellationError` を throw して `catch` に落ちる経路があるため、
+`catch is CancellationError` を正常系として扱い、`.failed` に書き戻さない。
+立てた `.loading` はキャンセル経路でも戻す。これは先頭レシピ
+「キャンセル時は loading state を戻してから rethrow する」と同じ理由である。
+
+```swift
+@MainActor
+final class FeedViewModel {
+    enum LoadState {
+        case idle
+        case loading
+        case loaded([FeedItem])
+        case failed(any Error)
+    }
+
+    private(set) var state: LoadState = .idle
+    private let feedUseCase: FeedUseCase
+
+    func load(cancellation: CancellationContext) async {
+        if cancellation.isCancelled { return }
+
+        state = .loading
+        do {
+            let items = try await feedUseCase.fetch()
+            if cancellation.isCancelled {
+                state = .idle // 立てた loading は戻す
+                return
+            }
+            state = .loaded(items)
+        } catch is CancellationError {
+            state = .idle // キャンセルは正常系。.failed には書き戻さない
+        } catch {
+            state = .failed(error)
+        }
+    }
+}
+```
+
+`cancellation: CancellationContext? = nil` は便利に見えるが、nil 経路では
+`cancellation?.check()` や `cancellation?.isCancelled` が一切検査しなくなる。
+特に SwiftUI `.task` から context なしで呼ぶ経路では、`.task` 自身の ambient cancellation が
+存在するのに検査されない。
+
+ViewTaskStore 起点と SwiftUI `.task` 起点が同じメソッドを共有する場合も、context は optional にせず
+non-optional のまま受ける。`.task` 起点からは `CancellationContext()` を明示的に渡す。
+`CancellationContext` は現在の task の ambient 状態を読むだけの値なので、`.task` の task 内で作れば
+`.task` のキャンセルが正しく反映される。これにより explicit passing の思想を保ったまま、
+nil 経路の検査漏れを構造的に排除できる。
+
+```swift
+private enum FeedActions {
+    static let load: ActionID = "feed.load"
+}
+
+// ViewTaskStore 起点
+viewTaskStore.start(
+    id: FeedActions.load,
+    lifetime: .screenBound,
+    policy: .ignoreNew
+) { cancellation in
+    await viewModel.load(cancellation: cancellation)
+}
+
+// SwiftUI .task 起点 — optional + nil ではなく、明示的に渡す
+.task {
+    await viewModel.load(cancellation: CancellationContext())
+}
+```
+
 ## 同じ ActionID の方針を分散させない
 
 `ActionRunner` は `ActionDescriptor` に重複ポリシーを束ねるが、`ViewTaskStore.start` は

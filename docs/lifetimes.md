@@ -86,8 +86,46 @@ extension ActionID {
 }
 ```
 
-シングルトンを避けたい場合は、`App` 構造体の `@State` で所有して
-ルート view にイニシャライザ注入しても同じ寿命が得られる。
+composition root からアプリ寿命の一度きり準備処理を起動する場合も、同じ store を使う。
+`onChange` は同期コールバックなので、`.task` ではなく `ViewTaskStore` に渡す出番である。
+`.ignoreNew` は多重起動を防ぐ。
+
+```swift
+@main
+struct MyApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var appTaskStore = ViewTaskStore()
+    @State private var bootstrapped = false
+
+    var body: some Scene {
+        WindowGroup {
+            RootView()
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    guard phase == .active, !bootstrapped else { return }
+                    bootstrapped = true
+                    appTaskStore.start(
+                        id: AppActions.bootstrap,
+                        lifetime: .appBound,
+                        policy: .ignoreNew
+                    ) { _ in
+                        await prepareServices()
+                    }
+                }
+        }
+    }
+
+    private func prepareServices() async {
+        // 広告 SDK や analytics の一度きり準備
+    }
+}
+
+private enum AppActions {
+    static let bootstrap: ActionID = "app.bootstrap"
+}
+```
+
+上の bootstrap 例のように `App` 構造体の `@State` で所有すれば、シングルトンを使わずに
+同じ寿命が得られる。ルート view へのイニシャライザ注入でもよい。
 要点は「何が store を所有しているか」であって、注入手段ではない。
 
 ## sceneBound — シーンのルート view 所有
