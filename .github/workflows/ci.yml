@@ -8,13 +8,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: this workflow only reads the repo. Any future step that
+# needs to write (comments, SARIF upload, OIDC) must opt in at the job level.
+permissions:
+  contents: read
+
 jobs:
   swift:
     name: Swift package checks
     runs-on: macos-15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        # Pinned to a full commit SHA (supply-chain hardening); Dependabot keeps
+        # the trailing tag comment in sync when it proposes an upgrade.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Show Swift version
         run: swift --version
