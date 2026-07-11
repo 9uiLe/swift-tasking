@@ -13,12 +13,24 @@ let package = Package(
     ],
     products: [
         .library(
+            name: "TaskingCore",
+            targets: ["TaskingCore"]
+        ),
+        .library(
             name: "Tasking",
             targets: ["Tasking"]
         )
     ],
     targets: [
-        .target(name: "Tasking"),
+        .target(name: "TaskingCore"),
+        .target(
+            name: "Tasking",
+            dependencies: ["TaskingCore"]
+        ),
+        .testTarget(
+            name: "TaskingCoreTests",
+            dependencies: ["TaskingCore"]
+        ),
         .testTarget(
             name: "TaskingTests",
             dependencies: ["Tasking"]

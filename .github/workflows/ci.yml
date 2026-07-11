@@ -37,14 +37,18 @@ jobs:
       - name: Test package
         run: swift test
 
+      - name: Test package with Thread Sanitizer
+        run: swift test --sanitize=thread
+
       # swift build --triple + SDK 指定はツールチェーン間で挙動が揺れる
       # (Xcode 16.4: -Xswiftc -sdk が効かない / 26.5: SDKROOT export が
       # manifest コンパイルを壊す)ため、バージョン非依存の xcodebuild を使う。
+      # 複数 product をまとめて検証する package scheme を使う。
       # scheme 名はパッケージ名由来で、checkout ディレクトリ名に依存しない。
       - name: Build for iOS 13 floor
         run: |
           xcodebuild build -quiet \
-            -scheme swift-tasking \
+            -scheme swift-tasking-Package \
             -destination "generic/platform=iOS Simulator"
 
       - name: Test prototype package

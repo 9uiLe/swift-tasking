@@ -5,12 +5,14 @@
 `Tasking` is a small Swift package for making unstructured task ownership
 explicit at UI and application boundaries.
 
-It provides two deliberately separate types:
+It provides three deliberately separate types across two products:
 
 - `ViewTaskStore`: owns task handles started from synchronous UI callbacks such as
   `Button` actions, and makes lifetime plus duplicate policy visible.
 - `ActionRunner`: runs work in an existing async context, tracks action state,
   and returns a typed outcome without creating a task.
+- `TaskSlot` (`TaskingCore`): owns one replaceable task outside UI isolation and
+  can wait for cancelled or superseded work to actually terminate.
 
 The package is intentionally not a replacement for structured concurrency. Use
 `async let`, task groups, and SwiftUI `.task` whenever their scope matches the
@@ -58,15 +60,19 @@ Design rationale and vocabulary live in [`docs/`](docs/README.md):
 
 ```swift
 // Add to Package.swift
-.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.1.0")
+.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.2.0")
 ```
 
 ```swift
 .product(name: "Tasking", package: "swift-tasking")
+// Add this only to non-UI targets that need explicit unstructured-task ownership.
+.product(name: "TaskingCore", package: "swift-tasking")
 ```
 
 ```swift
 import Tasking
+// Or, from a non-UI target:
+import TaskingCore
 ```
 
 ## Support Policy
@@ -92,6 +98,49 @@ closure captures are checked under the consuming target's language mode. In
 practice, non-Sendable captures that Swift 6 would reject can compile silently
 from Swift 5 targets. Treat Swift 6 language mode in consuming feature modules
 as part of the support boundary.
+
+## TaskSlot
+
+Use `TaskSlot` from the `TaskingCore` product when a non-UI owner must start an
+unstructured task and replace it with newer work. It is an actor and has no
+`MainActor`, SwiftUI, lifetime-label, or business-error policy.
+
+```swift
+import TaskingCore
+
+actor SearchRefreshCoordinator {
+    private let taskSlot = TaskSlot()
+
+    func scheduleRefresh() async {
+        await taskSlot.replace { [weak self] cancellation in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+                try cancellation.check()
+                await self?.refreshLatestQuery()
+            } catch is CancellationError {
+                return
+            } catch {
+                await self?.recordRefreshFailure(error)
+            }
+        }
+    }
+
+    func cancelAndSettle() async {
+        await taskSlot.cancel()
+        await taskSlot.waitForIdle()
+    }
+}
+```
+
+`replace` requests cancellation of the previous operation but does not assume it
+has stopped. Superseded operations remain owned until they finish, and
+`waitForIdle()` waits for all of them. Operations must cooperate through the
+provided `CancellationContext`. The optional `priority` is forwarded to Swift's
+`Task` initializer; leave it `nil` to inherit the caller's priority.
+
+Do not call `waitForIdle()` from an operation owned by the same slot; that would
+wait for the current operation to finish from inside itself. Keep debounce timing,
+domain state, retries, persistence, and error handling in the consuming feature.
 
 ## ViewTaskStore
 
@@ -231,6 +280,7 @@ caller's existing structured task.
 - Prefer structured concurrency first.
 - Use SwiftUI `.task` for view lifecycle work.
 - Use `ViewTaskStore.start(...)` for synchronous user-action callbacks.
+- Use `TaskSlot` only when a non-UI owner must create and replace unstructured work.
 - Keep `Task.detached` out of feature code unless the work intentionally should
   not inherit actor, priority, task-local values, or cancellation context.
 - Keep nested `Task {}` out of Tasking operations; use structured child work.
