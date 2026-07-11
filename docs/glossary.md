@@ -35,6 +35,7 @@ unstructured task のハンドル(`Task` 値)への参照を保持し、キャ�
 破棄時の後始末に責任を持つこと。構造化並行性では task tree が自動で行うが、
 `Task {}` では誰かが明示的に引き受けなければ**所有者不在(fire-and-forget)**になる。
 ViewTaskStore はこの所有を引き受ける型。ActionRunner は意図的に所有しない。
+非 UI 文脈では TaskingCore の TaskSlot が単一taskの所有を引き受ける。
 
 ### ActionLifetime(ライフタイム)
 ViewTaskStore が所有する task の「論理的な」生存スコープの宣言。
@@ -73,7 +74,12 @@ ActionFailure はエラーの型名とメッセージの文字列表現で、**�
 消去している**(ADR-0005)。ログ・計測向けであり、エラー種別による分岐・回復は
 operation 内(ViewModel 側)で行う。
 
-## 2 つの中核型
+## 3 つの中核型
+
+### TaskSlot
+非 UI actorから起動する置換可能なunstructured taskを所有するTaskingCoreのactor。
+replace/cancel済みtaskも実終了までは所有し、`waitForIdle`で全終了を待てる。
+ActionID、UI lifetime、業務エラー、キューは扱わない。
 
 ### ViewTaskStore
 同期 UI コールバック(`Button` action など、`await` できない場所)から作られる
@@ -95,4 +101,5 @@ ADR-0003)。
 | スコープ内で並行処理 | `async let` / task group(構造化を優先) |
 | 同期コールバックから起動し、寿命・重複方針を明示したい | `ViewTaskStore.start` |
 | async 文脈内で重複制御と型付き結果が欲しい | `ActionRunner.run` |
+| 非 UI ownerが同期scope外まで単一taskを所有・置換したい | `TaskingCore.TaskSlot` |
 | 実行順序の保証(FIFO) | **スコープ外** — mattmassicotte/Queue 等を検討 |

@@ -39,6 +39,7 @@ Tasking は「見えなくなっているものを見えるようにする」こ
 | 宣言と強制 | ActionLifetime は宣言(レビュー・一括キャンセルの単位)であって、強制機構ではない | [0004](adr/0004-lifetime-is-declared-not-enforced.md) |
 | 結果の型 | ActionFailure はエラー型を消去する。回復は operation 内、outcome はログ・計測用 | [0005](adr/0005-actionfailure-erases-error-types.md) |
 | 品質の下限 | Swift 6 言語モード専用・@MainActor 固定。UI 境界のツールであることを型で明示 | [0006](adr/0006-swift6-mainactor-only.md) |
+| 非 UI 所有 | TaskingCore / TaskSlot に単一slotだけを分離し、UI APIを一般化しない | [0010](adr/0010-tasking-core-task-slot.md) |
 | UI 状態の責務 | store は Observable にしない。ローディング表示は ViewModel state の仕事 | [0007](adr/0007-store-is-not-observable.md) |
 
 ### 原則: 構造化並行性が第一、本ライブラリは残余ケース専用

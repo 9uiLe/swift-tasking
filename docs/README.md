@@ -22,3 +22,4 @@
 | [0007](adr/0007-store-is-not-observable.md) | store は Observable にしない(UI 状態は ViewModel の責務) |
 | [0008](adr/0008-publication-naming-license-language.md) | 公開名称は swift-tasking・MIT ライセンス・二層言語構造(API 英語 / 設計 docs 日本語) |
 | [0009](adr/0009-cancel-removes-tracking-immediately.md) | cancel は追跡を即時解除し、実終了待ちは ViewModel 側の責務に残す |
+| [0010](adr/0010-tasking-core-task-slot.md) | 非 UI の置換可能 task 所有を TaskingCore / TaskSlot に分離する |

@@ -71,6 +71,15 @@ iOS / watchOS / tvOS の background execution 権限を得るものではない�
 Tasking はそれらの代替ではない。使う場合も、Tasking は「どの Action か」「どの lifetime か」
 「どの duplicate policy か」を見えるようにする役割に留める。
 
+## 非 UI target は TaskingCore だけへ依存する
+
+Application/service actorがunstructured taskを所有する必要がある場合は、UI向けの
+`Tasking`ではなく`TaskingCore` productへ依存し、`TaskSlot`を使う。TaskSlotは
+debounce、retry、業務エラー、永続化flushを提供しない。それらはfeature側に残す。
+
+同じslotのoperation内から`waitForIdle`を呼ばない。shutdownや明示flushでは、
+owner側から`cancel()`した後に`waitForIdle()`を呼び、協調終了を待つ。
+
 ## テストと観測性の現状
 
 0.1.0 の `ViewTaskStore.start` は完了待ち API を持たない。利用側テストで完了の事実を待つ場合は、
@@ -82,6 +91,7 @@ operation をラップする。
 
 ## 0.2 系ロードマップ候補
 
+- `TaskingCore` / `TaskSlot` の実利用から得たcancel・settle契約のフィードバック。
 - `ViewTaskStore` の完了待ち API: `awaitCompletion(of:)` / `settle()` など。
 - 観測専用 event hook: start / finish / cancel / skip を analytics や signpost に流す。
 - release build の未処理エラー観測: ADR-0003 の `onUnhandledError` 系。
