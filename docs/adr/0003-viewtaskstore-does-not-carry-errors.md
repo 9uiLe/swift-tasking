@@ -1,7 +1,6 @@
 # ADR-0003: ViewTaskStore は業務エラーを運ばない
 
-- ステータス: 確定(2026-07-03 グリリングで作者確認済み)。
-  ただし release ビルドの無音化は**見落としと認定** — 下記「追記」参照
+- ステータス: 確定。release-safe な観測フックを実装済み
 - 日付: 2026-07-03
 
 ## 文脈
@@ -16,8 +15,12 @@
 
 - `CancellationError` → 正常なキャンセル終了として黙って終わる。
 - それ以外の throw → **契約違反(プログラミングミス)**として
-  `assertionFailure` を発火する。業務エラーは operation を出る前に
-  ViewModel state へ変換されていなければならない。
+  扱う。業務エラーは operation を出る前に ViewModel state へ変換されて
+  いなければならない。
+- `ViewTaskStore(onUnhandledError:)` が設定されていれば、契約違反を
+  `(ActionRun, ActionFailure)` として通知する。通知はログ・telemetry・crash report
+  用であり、業務エラーの回復経路ではない。
+- handler 未設定時は従来どおり debug assertion を発火する。
 
 ## 根拠
 
@@ -28,24 +31,13 @@
 
 ## 代償
 
-- `assertionFailure` は release ビルドでは no-op のため、**契約違反の業務エラーは
-  release では無音で握り潰される**。検出は debug/テストに限られる。
+- handler は opt-in のため、未設定の release ビルドでは契約違反を通知できない。
+  production の composition root で logging / crash reporting handler を設定する必要がある。
 - 「とりあえず throw を投げっぱなしにして store 側で拾う」という段階的導入が
   できず、採用ハードルが上がる。
 
-## 追記(2026-07-03 グリリング結果)
+## 観測タイミング
 
-release ビルドでの無音化は**意図した代償ではなく見落とし**と作者が認定した。
-対応方針:
-
-- 「業務エラーは state に変換してから境界を出る」という決定自体は維持する。
-- 将来、契約違反を release でも観測可能にするフック
-  (例: `onUnhandledError: (ActionFailure) -> Void` — ログ・クラッシュレポート
-  送信用。**制御フローの回復用ではない**)の追加を**検討中**として予約する。
-- 本セッションでは実装変更は行わない。フックを導入する際は本 ADR を改訂し、
-  「エラーを運ばない」原則との整合(フックは通知であって伝達路ではない)を
-  明記すること。
-
-## 未解決の問い
-
-- フック導入時のシグネチャと呼び出しタイミング(assertion の直前か、代替か)。
+handler は operation の catch 節で、tracking 解除より前に同期実行する。そのため handler は
+受け取った `ActionRun` を `isRunning(_:)` で照合できる。handler が設定されている場合は
+観測経路をテスト可能にするため assertion を代替し、未設定時だけ従来の assertion を使う。

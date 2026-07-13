@@ -1,6 +1,6 @@
-# ADR-0009: cancel は追跡を即時解除し、実終了までは追跡し続けない
+# ADR-0009: cancel は追跡を即時解除し、handle ownership は実終了まで維持する
 
-- ステータス: 確定(プロトタイプ検証 F4/F10 を受けて明文化)
+- ステータス: 確定。完了待ち API 導入時に ownership 分離を追記
 - 日付: 2026-07-03
 
 ## 文脈
@@ -24,8 +24,13 @@
 `isRunning` / `runningCount` は「追跡中」の同期クエリであり、実処理の終了判定や
 UI state の根拠にはしない。
 
-実処理の終了待ち、キャンセル後に残り得る副作用の破棄、loading state の復旧は
-ViewModel 側の state / 世代管理 / domain-level token で扱う。
+tracking と task handle ownership は別の責務として保持する。キャンセル済み run は
+tracking 用辞書から終了待ち専用辞書へ移し、実終了まで store が handle を所有する。
+`awaitCompletion(of:)` / `waitForIdle()` は両方の辞書を対象にする一方、重複判定と
+全 tracking query は tracking 用辞書だけを参照する。
+
+キャンセル後に残り得る副作用の破棄、loading state の復旧、結果の世代管理は
+引き続き ViewModel 側の state / domain-level token で扱う。
 
 ## 根拠
 
@@ -38,6 +43,9 @@ ViewModel 側の state / 世代管理 / domain-level token で扱う。
   `isRunning` を UI に直結したくなる誘因が強まる。これは ADR-0007 の責務配置と衝突する。
 - 即時解除は API と実装を小さく保ち、`cancelExisting` の「古い run を重複判定から外して
   新 run を開始する」という現行動作と一致する。
+- handle を別辞書で保持すれば、上記の tracking 意味論を変えずに task ownership の
+  実終了だけを待てる。同じ辞書へ cancellation flag 付きで残す案は `isRunning(_:)` と
+  lifetime query の意味を変えるため採用しない。
 
 ## 結果
 
@@ -47,6 +55,7 @@ ViewModel 側の state / 世代管理 / domain-level token で扱う。
   古い処理を弾くものではない。
 - operation は `CancellationContext.check()` を適切に呼び、ViewModel は世代ガードで
   古い run の結果を捨てる。
+- async teardown と ownership test は `awaitCompletion(of:)` / `waitForIdle()` で実終了を待つ。
 
 ## 注意
 
