@@ -6,13 +6,16 @@ import Tasking
 /// docs/lifetimes.md の推奨どおり、store をアプリ寿命のコンテナに所有させる。
 /// 画面所有の store に `.appBound` と書いても実効性がない(宣言の実効上限 =
 /// store の所有スコープ)ため、所有位置がこのユースケースの本体である。
+/// ViewModel も同じコンテナが所有するため、再表示した画面は継続中の `.syncing`
+/// state を引き継げる。二重開始は `.ignoreNew` が防ぐ。
 @MainActor
 public final class AppTaskContainer {
     public static let shared = AppTaskContainer()
 
     public let store = ViewTaskStore()
+    public let syncViewModel = SyncViewModel()
 
-    public init() {}
+    private init() {}
 }
 
 enum SyncAction {
@@ -59,12 +62,9 @@ public struct SyncSettingsScreen: View {
     private let container: AppTaskContainer
     @State private var viewModel: SyncViewModel
 
-    public init(
-        container: AppTaskContainer = .shared,
-        viewModel: SyncViewModel = SyncViewModel()
-    ) {
+    public init(container: AppTaskContainer = .shared) {
         self.container = container
-        _viewModel = State(initialValue: viewModel)
+        _viewModel = State(initialValue: container.syncViewModel)
     }
 
     public var body: some View {

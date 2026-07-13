@@ -5,6 +5,21 @@ import Tasking
 /// ActionRunner の合成と、CancellationContext の伝播境界の検証。
 @MainActor
 @Suite struct CompositionTests {
+    @Test func billingPublishesLoadingForAnAcceptedRefresh() async throws {
+        let gate = Signal()
+        let viewModel = BillingViewModel(fetchPlans: {
+            await gate.wait()
+            return ["Pro"]
+        })
+
+        async let refresh: Void = viewModel.refresh()
+        try await waitUntil { viewModel.loadState == .loading }
+        await gate.signal()
+        await refresh
+
+        #expect(viewModel.loadState == .loaded(["Pro"]))
+    }
+
     /// BillingViewModel: 2 つの async 入口(.task と .refreshable 相当)からの
     /// 同時 refresh は片方が skipped になる。
     @Test func runnerDeduplicatesAcrossTwoAsyncEntryPoints() async throws {

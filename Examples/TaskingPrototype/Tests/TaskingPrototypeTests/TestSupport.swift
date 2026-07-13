@@ -55,6 +55,6 @@ final class Recorder {
     }
 
     func count(of event: String) -> Int {
-        events.filter { $0 == event }.count
+        events.count { $0 == event }
     }
 }

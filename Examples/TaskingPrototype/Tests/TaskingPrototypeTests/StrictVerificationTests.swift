@@ -53,9 +53,10 @@ import Tasking
         }
 
         try await waitUntil { recorder.count(of: "saw-cancel") == 1 }
+        await store.waitForIdle()
         #expect(recorder.count(of: "untracked") == 1)
         #expect(store.runningCount(for: "selfCancel") == 0)
-        #expect(internalEntryCounts(of: store) == (0, 0))
+        #expect(internalEntryCounts(of: store) == (0, 0, 0))
     }
 
     /// `.cancelExisting` を 50 連打しても追跡は常に最新 1 件で、
@@ -74,8 +75,8 @@ import Tasking
             #expect(store.runningCount(for: "storm") == 1)
         }
 
-        try await waitUntil { !store.isRunning(id: "storm") }
-        try await waitUntil { internalEntryCounts(of: store) == (0, 0) }
+        await store.waitForIdle()
+        #expect(internalEntryCounts(of: store) == (0, 0, 0))
         #expect(recorder.count(of: "survivor") <= 1) // 生き残りは最後の 1 run だけ
     }
 
@@ -86,7 +87,8 @@ import Tasking
         for index in 0..<500 {
             store.start(id: DownloadAction.item("item-\(index)"), lifetime: .screenBound) { _ in }
         }
-        try await waitUntil { internalEntryCounts(of: store) == (0, 0) }
+        await store.waitForIdle()
+        #expect(internalEntryCounts(of: store) == (0, 0, 0))
     }
 
     /// ActionRunner: operation が実際のキャンセルなしに CancellationError を
@@ -136,32 +138,39 @@ import Tasking
     }
 
     #if !DEBUG
-    /// ADR-0003 の既知の制限の実証(release 構成専用):
-    /// 未処理の業務エラーは assertionFailure が no-op になるため、
-    /// 何のフィードバックもなく握り潰される。
-    /// 実行方法: swift test -c release --filter releaseBuildSilentlySwallows
-    @Test func releaseBuildSilentlySwallowsUncaughtErrors() async throws {
-        struct BusinessError: Error {}
-        let store = ViewTaskStore()
+    /// ADR-0003 の release-safe 観測契約を実証する。
+    @Test func releaseBuildReportsUncaughtErrorsThroughHook() async throws {
+        struct BusinessError: Error, CustomStringConvertible {
+            var description: String { "offline" }
+        }
         let recorder = Recorder()
-
-        store.start(id: "swallow", lifetime: .screenBound) { _ in
-            recorder.record("begin")
-            throw BusinessError() // 契約違反。release では無音で消える
+        let store = ViewTaskStore { run, failure in
+            recorder.record("\(run.actionID):\(failure.message)")
         }
 
-        try await waitUntil { !store.isRunning(id: "swallow") }
-        #expect(recorder.count(of: "begin") == 1)
-        // クラッシュも通知も起きずここに到達する = 無音の握り潰しを実証
+        let outcome = store.start(id: "report", lifetime: .screenBound) { _ in
+            throw BusinessError()
+        }
+
+        guard let run = outcome.run else {
+            Issue.record("Expected task to start")
+            return
+        }
+        await store.awaitCompletion(of: run)
+
+        #expect(recorder.count(of: "report:offline") == 1)
     }
     #endif
 }
 
 /// Mirror でライブラリ内部の追跡辞書のエントリ数を覗く(リーク検査専用)。
 @MainActor
-private func internalEntryCounts(of store: ViewTaskStore) -> (tasks: Int, runIDs: Int) {
+private func internalEntryCounts(
+    of store: ViewTaskStore
+) -> (tasks: Int, runIDs: Int, terminating: Int) {
     var tasks = -1
     var runIDs = -1
+    var terminating = -1
     for child in Mirror(reflecting: store).children {
         if child.label == "tasksByRunID" {
             tasks = Mirror(reflecting: child.value).children.count
@@ -169,6 +178,9 @@ private func internalEntryCounts(of store: ViewTaskStore) -> (tasks: Int, runIDs
         if child.label == "runIDsByActionID" {
             runIDs = Mirror(reflecting: child.value).children.count
         }
+        if child.label == "terminatingByRunID" {
+            terminating = Mirror(reflecting: child.value).children.count
+        }
     }
-    return (tasks, runIDs)
+    return (tasks, runIDs, terminating)
 }
