@@ -1,10 +1,16 @@
 /// The duplicate policy for Actions run through `ActionRunner`.
 public enum ActionDuplicatePolicy: Equatable, Sendable {
-    /// Reject a new run while the same `ActionID` is running.
-    case rejectWhileRunning
+    /// Keep the existing run and skip a new run with the same `ActionID`.
+    case ignoreNew
 
     /// Allow multiple runs with the same `ActionID` to overlap.
     case allowConcurrent
+
+    /// The former spelling of `ignoreNew`.
+    @available(*, deprecated, renamed: "ignoreNew")
+    public static var rejectWhileRunning: ActionDuplicatePolicy {
+        .ignoreNew
+    }
 }
 
 /// A `Sendable` and comparable value that represents an error produced by an Action.
@@ -46,7 +52,7 @@ public struct ActionDescriptor: Equatable, Sendable {
 
     public init(
         id: ActionID,
-        duplicatePolicy: ActionDuplicatePolicy = .rejectWhileRunning
+        duplicatePolicy: ActionDuplicatePolicy = .ignoreNew
     ) {
         self.id = id
         self.duplicatePolicy = duplicatePolicy
@@ -66,7 +72,7 @@ public final class ActionRunner {
 
     public func run<Success: Sendable>(
         _ descriptor: ActionDescriptor,
-        onStart: (ActionRun) -> Void = { _ in },
+        onStart: @MainActor (ActionRun) -> Void = { _ in },
         operation: @MainActor @Sendable (CancellationContext) async throws -> Success
     ) async -> ActionOutcome<Success> {
         switch start(descriptor) {
@@ -111,10 +117,10 @@ public final class ActionRunner {
         let runningRuns = runningRunsByActionID[descriptor.id, default: []]
 
         switch descriptor.duplicatePolicy {
-        case .rejectWhileRunning where !runningRuns.isEmpty:
+        case .ignoreNew where !runningRuns.isEmpty:
             return .skipped(.alreadyRunning)
 
-        case .rejectWhileRunning, .allowConcurrent:
+        case .ignoreNew, .allowConcurrent:
             let run = ActionRun(actionID: descriptor.id)
             runningRunsByActionID[descriptor.id, default: []].insert(run.runID)
             return .started(run)

@@ -32,16 +32,20 @@ struct ActionRunnerTests {
         #expect(startedRun != nil)
     }
 
-    @Test func rejectsDuplicateWhileRunning() async {
+    @Test func ignoreNewSkipsDuplicateWhileRunning() async {
         let runner = ActionRunner()
         let gate = AsyncGate()
+        let starts = StartProbe()
 
-        async let firstOutcome = runner.run(ActionDescriptor(id: "refresh")) { _ in
+        async let firstOutcome = runner.run(
+            ActionDescriptor(id: "refresh"),
+            onStart: { _ in starts.record() }
+        ) { _ in
             await gate.wait()
             return "first"
         }
 
-        await runner.waitUntilRunning("refresh")
+        await starts.wait(untilCount: 1)
 
         let secondOutcome = await runner.run(ActionDescriptor(id: "refresh")) { _ in
             "second"
@@ -57,24 +61,27 @@ struct ActionRunnerTests {
     @Test func allowsConcurrentRunsWhenRequested() async {
         let runner = ActionRunner()
         let gate = AsyncGate()
+        let starts = StartProbe()
 
         async let firstOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
+            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent),
+            onStart: { _ in starts.record() }
         ) { _ in
             await gate.wait()
             return "first"
         }
 
-        await runner.waitUntilRunning("refresh")
+        await starts.wait(untilCount: 1)
 
         async let secondOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
+            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent),
+            onStart: { _ in starts.record() }
         ) { _ in
             await gate.wait()
             return "second"
         }
 
-        await runner.waitUntilRunningCount("refresh", count: 2)
+        await starts.wait(untilCount: 2)
         #expect(runner.runningCount(for: "refresh") == 2)
 
         await gate.open()
@@ -126,6 +133,13 @@ struct ActionRunnerTests {
         let outcome = await task.value
         #expect(outcome == .cancelled)
     }
+
+    @available(*, deprecated)
+    @Test func rejectWhileRunningRemainsACompatibilityAlias() {
+        let legacy: ActionDuplicatePolicy = .rejectWhileRunning
+
+        #expect(legacy == .ignoreNew)
+    }
 }
 
 private enum SampleError: Error, CustomStringConvertible {
@@ -160,16 +174,31 @@ private actor AsyncGate {
     }
 }
 
-private extension ActionRunner {
-    func waitUntilRunning(_ id: ActionID) async {
-        while !isRunning(id: id) {
-            await Task.yield()
+@MainActor
+private final class StartProbe {
+    private var count = 0
+    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func record() {
+        count += 1
+
+        var remaining: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in waiters {
+            if count >= waiter.target {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
         }
+        waiters = remaining
     }
 
-    func waitUntilRunningCount(_ id: ActionID, count: Int) async {
-        while runningCount(for: id) != count {
-            await Task.yield()
+    func wait(untilCount target: Int) async {
+        guard count < target else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append((target, continuation))
         }
     }
 }
