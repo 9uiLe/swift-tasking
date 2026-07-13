@@ -96,6 +96,48 @@ final class SearchViewModel {
   古い run の結果を捨てる。
 - 「実処理が完全に終わるまで新規開始を禁止したい」場合は、現行 API の `.ignoreNew` だけに頼らない。
 
+## tracking 解除後の実終了は run handle 経由で待つ
+
+`cancel` は ADR-0009 の tracking 意味論を保つため、同期的に `isRunning == false` にする。
+一方で store はキャンセル済み task の handle を実終了まで所有しているため、async な teardown
+やテストでは `ActionRun` を使って実終了を待てる。
+
+```swift
+let outcome = taskStore.start(
+    id: "settings.save",
+    lifetime: .screenBound
+) { cancellation in
+    try await viewModel.save(cancellation: cancellation)
+}
+guard case let .started(run) = outcome else {
+    return
+}
+
+taskStore.cancel(run)
+await taskStore.awaitCompletion(of: run)
+```
+
+複数 run を一括で待つ場合は `await taskStore.waitForIdle()` を使う。待機中に開始された run も
+対象になるため、teardown では先に利用側の新規入力を止める。
+
+## TaskSlot の teardown は admission を閉じてから待つ
+
+actor は `await` のたびに再入可能である。`cancel()` と `waitForIdle()` を別々に呼ぶと、
+その間または待機中に `replace` が入り、未キャンセルの新規 operation まで待機対象になり得る。
+
+```swift
+actor SyncCoordinator {
+    private let slot = TaskSlot()
+
+    func shutDown() async {
+        await slot.cancelAndWaitForIdle()
+    }
+}
+```
+
+`cancelAndWaitForIdle()` は admission を閉じてから active task を cancel し、その後で初めて
+suspend する。自然完了を待ちたい場合は `close()` の後に `waitForIdle()` を呼ぶ。
+
 ## operation 内で unstructured task を作らない
 
 `CancellationContext` は現在実行中の task のキャンセル状態を読む。operation の中でさらに

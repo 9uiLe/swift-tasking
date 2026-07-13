@@ -47,6 +47,7 @@ Primary references:
 
 Design rationale and vocabulary live in [`docs/`](docs/README.md):
 
+- [Changelog](CHANGELOG.md) — public API additions, behavior changes, and migrations
 - [Glossary](docs/glossary.md) — domain vocabulary and a quick "which tool when" table
 - [Positioning](docs/positioning.md) — problem statement, design principles, comparison
   with alternatives (SwiftUI `.task(id:)`, VergeGroup TaskManager, TCA, async-task),
@@ -111,7 +112,8 @@ import TaskingCore
 actor SearchRefreshCoordinator {
     private let taskSlot = TaskSlot()
 
-    func scheduleRefresh() async {
+    @discardableResult
+    func scheduleRefresh() async -> Bool {
         await taskSlot.replace { [weak self] cancellation in
             do {
                 try await Task.sleep(for: .milliseconds(250))
@@ -125,9 +127,8 @@ actor SearchRefreshCoordinator {
         }
     }
 
-    func cancelAndSettle() async {
-        await taskSlot.cancel()
-        await taskSlot.waitForIdle()
+    func shutDown() async {
+        await taskSlot.cancelAndWaitForIdle()
     }
 }
 ```
@@ -136,11 +137,24 @@ actor SearchRefreshCoordinator {
 has stopped. Superseded operations remain owned until they finish, and
 `waitForIdle()` waits for all of them. Operations must cooperate through the
 provided `CancellationContext`. The optional `priority` is forwarded to Swift's
-`Task` initializer; leave it `nil` to inherit the caller's priority.
+`Task` initializer; leave it `nil` to inherit the caller's priority. `replace`
+returns `false` after the slot has closed, without running the operation.
 
-Do not call `waitForIdle()` from an operation owned by the same slot; that would
-wait for the current operation to finish from inside itself. Keep debounce timing,
-domain state, retries, persistence, and error handling in the consuming feature.
+Use `close()` followed by `waitForIdle()` for a graceful drain. Use
+`cancelAndWaitForIdle()` for teardown: it closes admission and requests cancellation
+before suspending, so no replacement can be admitted while shutdown is waiting. Closing
+is terminal and idempotent.
+
+For long-running operations, avoid strongly capturing the object that owns the slot.
+`owner -> slot -> task -> operation -> owner` forms a temporary retain cycle and prevents
+the slot's deinitialization safety net from cancelling the task until the operation ends.
+
+Calling `waitForIdle()` from an operation owned by the same slot is a contract
+violation. Debug builds assert; release builds exclude the current ownership context
+instead of waiting forever, while still waiting for other owned tasks. Task-local
+ownership markers make the same protection apply to structured children. Nested
+unstructured tasks remain unsupported because they create a separate cancellation
+boundary even though Swift copies task-local values into `Task {}`.
 
 ## ViewTaskStore
 
@@ -207,8 +221,19 @@ final class SettingsViewModel {
 
 Business errors should be converted to ViewModel state before they leave the
 operation. `ViewTaskStore` treats `CancellationError` as a normal cancellation;
-other uncaught errors are considered programming mistakes and trigger a debug
-assertion.
+other uncaught errors are considered programming mistakes. Install a store-level
+observer to report those failures in release builds:
+
+```swift
+let taskStore = ViewTaskStore { run, failure in
+    logger.error("\(run.actionID): \(failure.typeName): \(failure.message)")
+}
+```
+
+The observer runs while the failed run is still tracked and is for telemetry or
+crash reporting, not business-error recovery. Without an observer, the existing
+debug assertion remains the default behavior. The store retains the observer;
+capture a store-owning object weakly if the observer must call back into it.
 
 `ActionLifetime` has built-in `.screenBound`, `.sceneBound`, and `.appBound`
 values, and it can be extended with string literals:
@@ -224,7 +249,14 @@ viewTaskStore.cancel(lifetime: lifetime)
   what Tasking is currently tracking; they do not prove that no cancelled work
   is still executing. `cancel(id:)` and `cancel(lifetime:)` request cancellation
   and remove runs from tracking immediately, so `.ignoreNew` does not guard
-  against old work that ignores cancellation after a manual cancel.
+  against old work that ignores cancellation after a manual cancel. The store
+  retains those cancelled task handles until actual termination so async teardown
+  and tests can use `awaitCompletion(of:)` or `waitForIdle()` without changing
+  tracking semantics.
+- `awaitCompletion(of:)` waits for one concrete `ActionRun`; an already-finished
+  or foreign run returns immediately. `waitForIdle()` waits for all owned work,
+  including runs started while it is suspended. Neither method forcibly stops
+  an operation that ignores cancellation.
 - UI state belongs to the ViewModel. If a ViewModel sets loading state before
   work begins, reset that state before rethrowing `CancellationError`.
 - With `.cancelExisting`, cleanup from the old run can arrive after the new run
@@ -251,7 +283,9 @@ handling plus a typed terminal result.
 ```swift
 let runner = ActionRunner()
 
-let outcome = await runner.run(ActionDescriptor(id: "billing.refresh")) { cancellation in
+let outcome = await runner.run(
+    ActionDescriptor(id: "billing.refresh", duplicatePolicy: .ignoreNew)
+) { cancellation in
     try cancellation.check()
     try await billingUseCase.refresh()
     try cancellation.check()
