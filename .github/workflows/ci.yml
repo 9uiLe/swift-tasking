@@ -31,11 +31,14 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Build package
-        run: swift build
+      - name: Build package with strict concurrency and warnings as errors
+        run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test package
         run: swift test
+
+      - name: Test package in release
+        run: swift test -c release
 
       - name: Test package with Thread Sanitizer
         run: swift test --sanitize=thread
@@ -50,6 +53,10 @@ jobs:
           xcodebuild build -quiet \
             -scheme swift-tasking-Package \
             -destination "generic/platform=iOS Simulator"
+
+      - name: Build prototype with strict concurrency and warnings as errors
+        working-directory: Examples/TaskingPrototype
+        run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test prototype package
         working-directory: Examples/TaskingPrototype
