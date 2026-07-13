@@ -39,6 +39,7 @@ import Tasking
             store.cancelAll() // 残り 5,000 件
         }
         #expect(!store.isRunning(lifetime: .screenBound))
+        await store.waitForIdle()
 
         print("""
         [scale] start x10k: \(startDuration)

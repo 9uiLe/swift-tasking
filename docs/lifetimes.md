@@ -90,6 +90,10 @@ composition root からアプリ寿命の一度きり準備処理を起動する
 `onChange` は同期コールバックなので、`.task` ではなく `ViewTaskStore` に渡す出番である。
 `.ignoreNew` は多重起動を防ぐ。
 
+task の進捗を画面に表示する ViewModel も、task と同じ app-lifetime container に所有させる。
+store だけが長生きして ViewModel が画面ごとに作り直されると、画面へ戻ったときに進行中の
+task と表示 state が食い違う。
+
 ```swift
 @main
 struct MyApp: App {

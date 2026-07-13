@@ -11,13 +11,13 @@ struct ViewTaskStoreTests {
             await gate.markCompleted()
         }
 
-        guard case .started = outcome else {
+        guard case let .started(run) = outcome else {
             Issue.record("Expected task to start.")
             return
         }
 
         await gate.waitUntilCompleted()
-        await store.waitUntilNotRunning("load")
+        await store.awaitCompletion(of: run)
         #expect(!store.isRunning(id: "load"))
     }
 
@@ -25,18 +25,18 @@ struct ViewTaskStoreTests {
         let store = ViewTaskStore()
         let gate = AsyncGate()
 
-        store.start(id: "save", lifetime: .screenBound) { _ in
+        let first = store.start(id: "save", lifetime: .screenBound) { _ in
             await gate.waitUntilOpened()
         }
-
-        await store.waitUntilRunning("save")
 
         let outcome = store.start(id: "save", lifetime: .screenBound, policy: .ignoreNew) { _ in }
 
         #expect(outcome == .skipped(.alreadyRunning))
 
         await gate.open()
-        await store.waitUntilNotRunning("save")
+        if let run = first.run {
+            await store.awaitCompletion(of: run)
+        }
     }
 
     @Test func cancelExistingStartsReplacement() async {
@@ -48,20 +48,19 @@ struct ViewTaskStoreTests {
             await gate.waitUntilOpened()
         }
 
-        await store.waitUntilRunning("sync")
-
         let outcome = store.start(id: "sync", lifetime: .screenBound, policy: .cancelExisting) { _ in
             replacementRan = true
         }
 
-        guard case .started = outcome else {
+        guard case let .started(run) = outcome else {
             Issue.record("Expected replacement task to start.")
             return
         }
 
-        await store.waitUntilNotRunning("sync")
+        await store.awaitCompletion(of: run)
         #expect(replacementRan)
         await gate.open()
+        await store.waitForIdle()
     }
 
     @Test func allowConcurrentTracksMultipleRuns() async {
@@ -75,11 +74,10 @@ struct ViewTaskStoreTests {
             await gate.waitUntilOpened()
         }
 
-        await store.waitUntilRunningCount("download", count: 2)
         #expect(store.runningCount(for: "download") == 2)
 
         await gate.open()
-        await store.waitUntilNotRunning("download")
+        await store.waitForIdle()
     }
 
     @Test func cancelRunCancelsOnlyMatchingRun() async {
@@ -98,7 +96,6 @@ struct ViewTaskStoreTests {
             return
         }
 
-        await store.waitUntilRunningCount("upload", count: 2)
         store.cancel(firstRun)
 
         #expect(!store.isRunning(firstRun))
@@ -106,7 +103,7 @@ struct ViewTaskStoreTests {
         #expect(store.runningCount(for: "upload") == 1)
 
         await gate.open()
-        await store.waitUntilNotRunning("upload")
+        await store.waitForIdle()
     }
 
     @Test func cancelLifetimeCancelsMatchingTasks() async {
@@ -121,17 +118,14 @@ struct ViewTaskStoreTests {
             await appGate.waitUntilOpened()
         }
 
-        await store.waitUntilRunning("screen")
-        await store.waitUntilRunning("app")
-
         store.cancel(lifetime: .screenBound)
 
         #expect(!store.isRunning(id: "screen"))
         #expect(store.isRunning(id: "app"))
 
         await appGate.open()
-        await store.waitUntilNotRunning("app")
         await screenGate.open()
+        await store.waitForIdle()
     }
 
     @Test func customLifetimeCanBeCancelled() async {
@@ -143,7 +137,6 @@ struct ViewTaskStoreTests {
             await gate.waitUntilOpened()
         }
 
-        await store.waitUntilRunning("refresh")
         #expect(store.isRunning(lifetime: lifetime))
 
         store.cancel(lifetime: lifetime)
@@ -151,6 +144,7 @@ struct ViewTaskStoreTests {
         #expect(!store.isRunning(id: "refresh"))
         #expect(!store.isRunning(lifetime: lifetime))
         await gate.open()
+        await store.waitForIdle()
     }
 
     @Test func cancellationContextThrowsAfterStoreCancellation() async {
@@ -158,7 +152,7 @@ struct ViewTaskStoreTests {
         let release = AsyncGate()
         let observedCancellation = AsyncGate()
 
-        store.start(id: "cancel", lifetime: .screenBound) { cancellation in
+        let outcome = store.start(id: "cancel", lifetime: .screenBound) { cancellation in
             await release.waitUntilOpened()
 
             do {
@@ -168,23 +162,265 @@ struct ViewTaskStoreTests {
             }
         }
 
-        await store.waitUntilRunning("cancel")
         store.cancel(id: "cancel")
         await release.open()
         await observedCancellation.waitUntilCompleted()
+        if let run = outcome.run {
+            await store.awaitCompletion(of: run)
+        }
     }
+
+    @Test func cancelledRunIsUntrackedButAwaitCompletionWaitsForTermination() async {
+        let store = ViewTaskStore()
+        let operationStarted = AsyncGate()
+        let release = AsyncGate()
+        let waiterStarted = AsyncGate()
+        let waiterCompleted = AsyncGate()
+
+        let outcome = store.start(id: "zombie", lifetime: .screenBound) { _ in
+            await operationStarted.markCompleted()
+            await release.waitUntilOpened()
+        }
+        guard let run = outcome.run else {
+            Issue.record("Expected task to start.")
+            return
+        }
+        await operationStarted.waitUntilCompleted()
+
+        store.cancel(run)
+        #expect(!store.isRunning(run))
+
+        let waiter = Task { @MainActor in
+            await waiterStarted.markCompleted()
+            await store.awaitCompletion(of: run)
+            await waiterCompleted.markCompleted()
+        }
+        await waiterStarted.waitUntilCompleted()
+        try? await Task.sleep(for: .milliseconds(10))
+        let completedBeforeTermination = await waiterCompleted.hasCompleted
+        #expect(!completedBeforeTermination)
+
+        await release.open()
+        await waiterCompleted.waitUntilCompleted()
+        await waiter.value
+    }
+
+    @Test func waitForIdleIncludesRunsStartedWhileWaiting() async {
+        let store = ViewTaskStore()
+        let firstRelease = AsyncGate()
+        let secondRelease = AsyncGate()
+        let waiterStarted = AsyncGate()
+        let waiterCompleted = AsyncGate()
+
+        store.start(id: "first", lifetime: .screenBound) { _ in
+            await firstRelease.waitUntilOpened()
+        }
+
+        let waiter = Task { @MainActor in
+            await waiterStarted.markCompleted()
+            await store.waitForIdle()
+            await waiterCompleted.markCompleted()
+        }
+        await waiterStarted.waitUntilCompleted()
+
+        store.start(id: "second", lifetime: .screenBound) { _ in
+            await secondRelease.waitUntilOpened()
+        }
+        await firstRelease.open()
+        try? await Task.sleep(for: .milliseconds(10))
+        let completedBeforeSecondRun = await waiterCompleted.hasCompleted
+        #expect(!completedBeforeSecondRun)
+
+        await secondRelease.open()
+        await waiterCompleted.waitUntilCompleted()
+        await waiter.value
+    }
+
+    @Test func cancelAllMovesEveryRunToTerminationOwnership() async {
+        let store = ViewTaskStore()
+        let release = AsyncGate()
+
+        store.start(id: "one", lifetime: .screenBound) { _ in
+            await release.waitUntilOpened()
+        }
+        store.start(id: "two", lifetime: .appBound) { _ in
+            await release.waitUntilOpened()
+        }
+
+        store.cancelAll()
+        #expect(!store.isRunning(id: "one"))
+        #expect(!store.isRunning(id: "two"))
+
+        await release.open()
+        await store.waitForIdle()
+    }
+
+    @Test func awaitCompletionReturnsForRunOwnedByAnotherStore() async {
+        let store = ViewTaskStore()
+        let otherStore = ViewTaskStore()
+        let release = AsyncGate()
+
+        let outcome = otherStore.start(id: "other", lifetime: .screenBound) { _ in
+            await release.waitUntilOpened()
+        }
+        guard let run = outcome.run else {
+            Issue.record("Expected task to start.")
+            return
+        }
+
+        await store.awaitCompletion(of: run)
+        #expect(otherStore.isRunning(run))
+
+        otherStore.cancelAll()
+        await release.open()
+        await otherStore.waitForIdle()
+    }
+
+    @Test func unhandledErrorHookReceivesRunBeforeItIsUntracked() async {
+        let observer = UnhandledErrorObserver()
+        let store = ViewTaskStore { run, failure in
+            observer.record(run: run, failure: failure)
+        }
+        observer.store = store
+
+        let outcome = store.start(id: "failure", lifetime: .screenBound) { _ in
+            throw SampleError.offline
+        }
+        guard let run = outcome.run else {
+            Issue.record("Expected task to start.")
+            return
+        }
+
+        await store.awaitCompletion(of: run)
+
+        #expect(observer.run == run)
+        #expect(observer.failure?.typeName.contains("SampleError") == true)
+        #expect(observer.failure?.message == "offline")
+        #expect(observer.wasTrackedWhenReported)
+        #expect(!store.isRunning(run))
+    }
+
+    @Test func deallocatingStoreReleasesUnhandledErrorHandlerWhileOperationIsRunning() async {
+        let operationStarted = AsyncGate()
+        let releaseOperation = AsyncGate()
+        var handlerCapture: UnhandledErrorHandlerCapture? = .init()
+        weak var weakHandlerCapture = handlerCapture
+        defer { weakHandlerCapture = nil }
+
+        var store: ViewTaskStore? = ViewTaskStore { [handlerCapture] _, _ in
+            handlerCapture?.recordInvocation()
+        }
+        weak var weakStore = store
+        defer { weakStore = nil }
+
+        store?.start(id: "handler-lifetime", lifetime: .screenBound) { _ in
+            await operationStarted.markCompleted()
+            await releaseOperation.waitUntilOpened()
+        }
+        await operationStarted.waitUntilCompleted()
+
+        store = nil
+        handlerCapture = nil
+
+        #expect(weakStore == nil)
+        #expect(weakHandlerCapture == nil)
+        await releaseOperation.open()
+    }
+
+    @Test func completionGateSupportsMultipleWaiters() async {
+        let gate = AsyncGate()
+
+        async let first: Void = gate.waitUntilCompleted()
+        async let second: Void = gate.waitUntilCompleted()
+        await gate.waitUntilCompletedWaiterCount(2)
+        await gate.markCompleted()
+
+        _ = await (first, second)
+    }
+
+    #if !DEBUG
+    @Test func currentRunAwaitCompletionReturnsInRelease() async {
+        let store = ViewTaskStore()
+        let runReference = RunReference()
+        let returned = AsyncGate()
+
+        let outcome = store.start(id: "self-await", lifetime: .screenBound) { _ in
+            guard let run = runReference.run else {
+                Issue.record("Run was not published before operation execution.")
+                return
+            }
+            await store.awaitCompletion(of: run)
+            await returned.markCompleted()
+        }
+        runReference.run = outcome.run
+
+        await returned.waitUntilCompleted()
+        await store.waitForIdle()
+    }
+
+    @Test func currentRunWaitForIdleReturnsInRelease() async {
+        let store = ViewTaskStore()
+        let returned = AsyncGate()
+
+        store.start(id: "self-idle", lifetime: .screenBound) { _ in
+            await store.waitForIdle()
+            await returned.markCompleted()
+        }
+
+        await returned.waitUntilCompleted()
+        await store.waitForIdle()
+    }
+
+    @Test func nestedUnstructuredTaskInheritsSelfWaitProtection() async {
+        let store = ViewTaskStore()
+        let returned = AsyncGate()
+
+        store.start(id: "nested-self-idle", lifetime: .screenBound) { _ in
+            let inner = Task { @MainActor in
+                await store.waitForIdle()
+            }
+            await inner.value
+            await returned.markCompleted()
+        }
+
+        await returned.waitUntilCompleted()
+        await store.waitForIdle()
+    }
+
+    @Test func unhandledErrorWithoutHookKeepsLegacyReleaseBehavior() async {
+        let store = ViewTaskStore()
+        let outcome = store.start(id: "legacy-failure", lifetime: .screenBound) { _ in
+            throw SampleError.offline
+        }
+
+        if let run = outcome.run {
+            await store.awaitCompletion(of: run)
+        }
+        #expect(!store.isRunning(id: "legacy-failure"))
+    }
+    #endif
 }
 
 private actor AsyncGate {
-    private var completedContinuation: CheckedContinuation<Void, Never>?
+    private var completedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var completedWaiterCountContinuations: [
+        (target: Int, continuation: CheckedContinuation<Void, Never>)
+    ] = []
     private var openedContinuations: [CheckedContinuation<Void, Never>] = []
     private var isCompleted = false
     private var isOpen = false
 
+    var hasCompleted: Bool {
+        isCompleted
+    }
+
     func markCompleted() {
         isCompleted = true
-        completedContinuation?.resume()
-        completedContinuation = nil
+        let continuations = completedContinuations
+        completedContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 
     func waitUntilCompleted() async {
@@ -193,7 +429,17 @@ private actor AsyncGate {
         }
 
         await withCheckedContinuation { continuation in
-            completedContinuation = continuation
+            completedContinuations.append(continuation)
+            resumeCompletedWaiterCountContinuations()
+        }
+    }
+
+    func waitUntilCompletedWaiterCount(_ target: Int) async {
+        guard completedContinuations.count < target else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            completedWaiterCountContinuations.append((target, continuation))
         }
     }
 
@@ -215,24 +461,52 @@ private actor AsyncGate {
             continuation.resume()
         }
     }
+
+    private func resumeCompletedWaiterCountContinuations() {
+        var remaining: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in completedWaiterCountContinuations {
+            if completedContinuations.count >= waiter.target {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        completedWaiterCountContinuations = remaining
+    }
 }
 
-private extension ViewTaskStore {
-    func waitUntilRunning(_ id: ActionID) async {
-        while !isRunning(id: id) {
-            await Task.yield()
-        }
-    }
+private enum SampleError: Error, CustomStringConvertible {
+    case offline
 
-    func waitUntilNotRunning(_ id: ActionID) async {
-        while isRunning(id: id) {
-            await Task.yield()
-        }
+    var description: String {
+        "offline"
     }
+}
 
-    func waitUntilRunningCount(_ id: ActionID, count: Int) async {
-        while runningCount(for: id) != count {
-            await Task.yield()
-        }
+@MainActor
+private final class UnhandledErrorObserver {
+    weak var store: ViewTaskStore?
+    private(set) var run: ActionRun?
+    private(set) var failure: ActionFailure?
+    private(set) var wasTrackedWhenReported = false
+
+    func record(run: ActionRun, failure: ActionFailure) {
+        self.run = run
+        self.failure = failure
+        wasTrackedWhenReported = store?.isRunning(run) == true
     }
+}
+
+@MainActor
+private final class UnhandledErrorHandlerCapture {
+    private(set) var invocationCount = 0
+
+    func recordInvocation() {
+        invocationCount += 1
+    }
+}
+
+@MainActor
+private final class RunReference {
+    var run: ActionRun?
 }

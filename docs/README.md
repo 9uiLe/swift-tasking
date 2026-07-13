@@ -4,7 +4,7 @@
 - [ポジショニング](positioning.md) — 解決する問題・設計思想・競合比較・良い点と悪い点・公開運用方針
 - [ライフタイムの推奨構成](lifetimes.md) — store の所有位置で決まる lifetime の実効性と構成例
 - [レシピ集](recipes.md) — プロトタイプ検証で見つかった state/cancellation の定型と落とし穴
-- [大規模導入ガイド](adoption.md) — Swift 5 混在、ActionID ガバナンス、`.appBound` の境界、0.2 ロードマップ
+- [大規模導入ガイド](adoption.md) — Swift 5 混在、ActionID ガバナンス、`.appBound` の境界、移行メモ
 
 ## Architecture Decision Records
 
@@ -23,3 +23,5 @@
 | [0008](adr/0008-publication-naming-license-language.md) | 公開名称は swift-tasking・MIT ライセンス・二層言語構造(API 英語 / 設計 docs 日本語) |
 | [0009](adr/0009-cancel-removes-tracking-immediately.md) | cancel は追跡を即時解除し、実終了待ちは ViewModel 側の責務に残す |
 | [0010](adr/0010-tasking-core-task-slot.md) | 非 UI の置換可能 task 所有を TaskingCore / TaskSlot に分離する |
+| [0011](adr/0011-task-slot-close-and-self-wait.md) | TaskSlot は terminal close と自己待機除外を持つ |
+| [0012](adr/0012-store-tracking-and-ownership.md) | ViewTaskStore は tracking と task ownership を別状態で持つ |

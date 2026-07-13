@@ -27,8 +27,8 @@ Tasking の `isRunning` / `runningCount` が答えるのは「追跡中かどう
 
 この区別は `.ignoreNew` の理解に重要である(ADR-0009)。手動キャンセル後は追跡が消えるため、
 古い処理がまだ実行中でも同じ ActionID の新しい `start(..., policy: .ignoreNew)` は
-開始され得る。表示状態や「実処理が残っているか」の判断は ViewModel 側の state /
-世代管理で扱う。
+開始され得る。表示状態と結果の世代管理は ViewModel が扱い、task handle の実終了は
+`awaitCompletion(of:)` / `waitForIdle()` で待てる。
 
 ### 所有(Ownership)
 unstructured task のハンドル(`Task` 値)への参照を保持し、キャンセル・生存確認・
@@ -52,7 +52,7 @@ ViewTaskStore が所有する task の「論理的な」生存スコープの宣
 | `TaskStartPolicy`(ViewTaskStore) | `.ignoreNew` | 既存を維持し新規をスキップ(保存ボタンの二度押し対策の既定) |
 | | `.cancelExisting` | 既存にキャンセルを要求してから新規を開始(検索の打ち直し) |
 | | `.allowConcurrent` | 同一 ActionID の並行実行を許可・追跡 |
-| `ActionDuplicatePolicy`(ActionRunner) | `.rejectWhileRunning` | 実行中は新規を拒否 |
+| `ActionDuplicatePolicy`(ActionRunner) | `.ignoreNew` | 既存を維持し新規をスキップ |
 | | `.allowConcurrent` | 並行実行を許可 |
 
 ActionRunner に `cancelExisting` 相当が**存在しない**のは設計による:
@@ -79,14 +79,15 @@ operation 内(ViewModel 側)で行う。
 ### TaskSlot
 非 UI actorから起動する置換可能なunstructured taskを所有するTaskingCoreのactor。
 replace/cancel済みtaskも実終了までは所有し、`waitForIdle`で全終了を待てる。
+`close` で新規 replace を恒久停止し、`cancelAndWaitForIdle` で race のない teardown を行う。
 ActionID、UI lifetime、業務エラー、キューは扱わない。
 
 ### ViewTaskStore
 同期 UI コールバック(`Button` action など、`await` できない場所)から作られる
 unstructured task のハンドルを所有する `@MainActor` クラス。
 ライフタイム・重複ポリシーを呼び出し箇所で宣言させ、`deinit` で全 task を
-キャンセルする。結果は返さない(業務エラーは ViewModel state に変換する契約。
-ADR-0003)。
+キャンセルする。cancel 後も handle は実終了まで所有するが、tracking query からは即時に
+外す。結果は返さない(業務エラーは ViewModel state に変換する契約。ADR-0003)。
 
 ### ActionRunner
 すでに async 文脈にいるときに、重複制御と型付き結果だけを提供する `@MainActor`

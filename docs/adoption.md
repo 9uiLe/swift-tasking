@@ -77,24 +77,33 @@ Application/service actorがunstructured taskを所有する必要がある場�
 `Tasking`ではなく`TaskingCore` productへ依存し、`TaskSlot`を使う。TaskSlotは
 debounce、retry、業務エラー、永続化flushを提供しない。それらはfeature側に残す。
 
-同じslotのoperation内から`waitForIdle`を呼ばない。shutdownや明示flushでは、
-owner側から`cancel()`した後に`waitForIdle()`を呼び、協調終了を待つ。
+同じslotのoperation内から`waitForIdle`を呼ばない。terminal shutdown では
+`cancelAndWaitForIdle()` を使い、新規 admission を閉じてから協調終了を待つ。既存 work を
+cancel せず自然完了させる場合は `close()` の後に `waitForIdle()` を呼ぶ。close しない
+`waitForIdle()` は待機中の replacement も対象にするため、非終端の観測用途に限る。
 
-## テストと観測性の現状
+## テストと観測性
 
-0.1.0 の `ViewTaskStore.start` は完了待ち API を持たない。利用側テストで完了の事実を待つ場合は、
-ViewModel state、明示的な test gate、または domain event を待つ。`isRunning` のポーリングは
-tracking query に過ぎず、UI state や business completion の代用にしない。
+`ViewTaskStore.awaitCompletion(of:)` は 1 run、`waitForIdle()` は store が所有する全 run の
+実終了を待つ。どちらも `isRunning` の tracking 意味論とは独立しており、cancel 済みで
+追跡から外れた task も対象にする。業務上の完了は引き続き ViewModel state や domain event
+で検証し、これらの API は task ownership の teardown 検証に使う。
 
-横断的な analytics / `os_signpost` / telemetry hook も 0.1.0 にはない。必要な場合は feature 側で
-operation をラップする。
+`ViewTaskStore(onUnhandledError:)` は operation から漏れた非 cancellation error を release
+でも観測する。業務エラーの伝達路にはせず、analytics / logging / crash report の通知点として
+使う。start / finish / cancel / skip の汎用 telemetry hook はまだ提供しない。
 
-## 0.2 系ロードマップ候補
+## Swift 6.2 以降の isolation 移行メモ
 
-- `TaskingCore` / `TaskSlot` の実利用から得たcancel・settle契約のフィードバック。
-- `ViewTaskStore` の完了待ち API: `awaitCompletion(of:)` / `settle()` など。
+この package は tools 6.0、Swift 6 language mode で、default isolation と
+`NonisolatedNonsendingByDefault` を有効にしていない。将来その upcoming feature を採用すると、
+`TaskSlot` の nonisolated async operation が呼び出し元 isolation を継承する意味論へ変わる。
+採用時には operation を slot actor の executor に直列化しないため、operation 型への
+`@concurrent` 付与を同じ変更で評価する。現行 toolchain ではコードへ先行追加しない。
+
+## 今後のロードマップ候補
+
 - 観測専用 event hook: start / finish / cancel / skip を analytics や signpost に流す。
-- release build の未処理エラー観測: ADR-0003 の `onUnhandledError` 系。
 - `ActionOutcome` の便宜プロパティ: `isSucceeded` / `isCancelled` / `failure` など。
 - 追跡中 run の debug listing / `CustomDebugStringConvertible`。
 - task naming(SE-0469)や task-local への `ActionRun` 注入による Instruments / crash log の照合。

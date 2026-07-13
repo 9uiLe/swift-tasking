@@ -1,4 +1,5 @@
 import Tasking
+import TaskingCore
 
 /// docs/recipes.md のコード断片が(依存のスタブ化以外)そのままコンパイル
 /// できることの検証。実行はしない。スニペットに構文・型エラーがあれば
@@ -88,7 +89,38 @@ private final class RecipeSearchViewModel {
     }
 }
 
-// --- レシピ 4: operation 内で unstructured task を作らない(推奨形) ---
+// --- レシピ 3: tracking 解除後の実終了は run handle 経由で待つ ---
+
+@MainActor
+private func recipeAwaitCompletion(
+    taskStore: ViewTaskStore,
+    viewModel: RecipeSettingsViewModel
+) async {
+    let outcome = taskStore.start(
+        id: "settings.save",
+        lifetime: .screenBound
+    ) { cancellation in
+        try await viewModel.save(cancellation: cancellation)
+    }
+    guard case let .started(run) = outcome else {
+        return
+    }
+
+    taskStore.cancel(run)
+    await taskStore.awaitCompletion(of: run)
+}
+
+// --- レシピ 4: TaskSlot の teardown は admission を閉じてから待つ ---
+
+private actor RecipeSyncCoordinator {
+    private let slot = TaskSlot()
+
+    func shutDown() async {
+        await slot.cancelAndWaitForIdle()
+    }
+}
+
+// --- レシピ 5: operation 内で unstructured task を作らない(推奨形) ---
 
 @MainActor
 private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
@@ -105,7 +137,7 @@ private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
     }
 }
 
-// --- レシピ 5: operation から store owner を強参照しない ---
+// --- レシピ 6: operation から store owner を強参照しない ---
 
 @MainActor
 private final class RecipeStoreOwningViewModel {
@@ -122,7 +154,7 @@ private final class RecipeStoreOwningViewModel {
     }
 }
 
-// --- レシピ 6: 同じ ActionID の方針を分散させない ---
+// --- レシピ 7: 同じ ActionID の方針を分散させない ---
 
 private enum RecipeSettingsAction {
     static let save: ActionID = "settings.save"

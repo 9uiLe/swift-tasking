@@ -38,7 +38,10 @@ public final class BillingViewModel {
 
     public func refresh() async {
         let outcome = await runner.run(
-            ActionDescriptor(id: BillingAction.refresh, duplicatePolicy: .rejectWhileRunning)
+            ActionDescriptor(id: BillingAction.refresh, duplicatePolicy: .ignoreNew),
+            onStart: { _ in
+                loadState = .loading
+            }
         ) { [fetchPlans] cancellation -> [String] in
             try cancellation.check()
             let plans = try await fetchPlans()
