@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-15
+
 ### Added
 
 - `TaskSlot.close()` and `cancelAndWaitForIdle()` for terminal draining and teardown.
