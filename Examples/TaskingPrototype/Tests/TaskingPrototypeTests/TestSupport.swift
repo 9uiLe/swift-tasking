@@ -1,4 +1,4 @@
-/// A one-shot operation gate. Cancellation deliberately does not open it.
+/// 一度だけ開く処理のゲート。キャンセルでは意図的に開かない。
 @MainActor
 final class OperationGate {
     private var isOpen = false

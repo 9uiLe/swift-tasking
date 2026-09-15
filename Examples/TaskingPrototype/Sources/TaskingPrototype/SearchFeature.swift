@@ -1,7 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// Search replaces previous work; the ViewModel guards result publication.
+/// 検索は前の処理を差し替え、ViewModel が結果の反映を保護する。
 enum SearchAction {
     static let query = ActionID("search.query")
 }
@@ -61,7 +61,7 @@ public struct SearchScreen: View {
 
     public var body: some View {
         List {
-            TextField("Search", text: $term)
+            TextField("検索", text: $term)
                 .onChange(of: term) { _, newTerm in
                     taskStore.start(
                         id: SearchAction.query,

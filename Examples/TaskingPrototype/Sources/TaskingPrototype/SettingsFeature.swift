@@ -1,7 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// Save actions use duplicate suppression and explicit cancellation.
+/// 保存操作では重複抑制と明示的なキャンセルを使う。
 enum SettingsAction {
     static let save = ActionID("settings.save")
 }
@@ -59,7 +59,7 @@ public struct SettingsScreen: View {
 
     public var body: some View {
         Form {
-            Button("Save") {
+            Button("保存") {
                 taskStore.start(
                     id: SettingsAction.save,
                     lifetime: .screenBound,
@@ -73,7 +73,7 @@ public struct SettingsScreen: View {
             if viewModel.saveState == .saving {
                 HStack {
                     ProgressView()
-                    Button("Cancel", role: .cancel) {
+                    Button("キャンセル", role: .cancel) {
                         taskStore.cancel(id: SettingsAction.save)
                     }
                 }
@@ -81,7 +81,7 @@ public struct SettingsScreen: View {
 
             switch viewModel.saveState {
             case .saved:
-                Text("Saved").foregroundStyle(.green)
+                Text("保存しました").foregroundStyle(.green)
             case let .failed(message):
                 Text(message).foregroundStyle(.red)
             case .idle, .saving:

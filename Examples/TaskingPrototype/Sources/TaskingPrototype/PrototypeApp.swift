@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Composes the example features and owns their shared presentation state.
-/// Embed it in an app with `WindowGroup { PrototypeRootView() }`.
+/// サンプル機能を組み合わせ、共有する表示状態を所有する。
+/// `WindowGroup { PrototypeRootView() }` でアプリに組み込む。
 public struct PrototypeRootView: View {
     @State private var settings = SettingsViewModel()
     @State private var search = SearchViewModel()
@@ -13,19 +13,19 @@ public struct PrototypeRootView: View {
     public var body: some View {
         TabView {
             NavigationStack { SettingsScreen(viewModel: settings) }
-                .tabItem { Label("Save", systemImage: "square.and.arrow.down") }
+                .tabItem { Label("保存", systemImage: "square.and.arrow.down") }
 
             NavigationStack { SearchScreen(viewModel: search) }
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                .tabItem { Label("検索", systemImage: "magnifyingglass") }
 
             NavigationStack { DownloadsScreen(viewModel: downloads) }
-                .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+                .tabItem { Label("ダウンロード", systemImage: "arrow.down.circle") }
 
             NavigationStack { SyncSettingsScreen() }
-                .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+                .tabItem { Label("同期", systemImage: "arrow.triangle.2.circlepath") }
 
             NavigationStack { BillingScreen(viewModel: billing) }
-                .tabItem { Label("Billing", systemImage: "creditcard") }
+                .tabItem { Label("課金", systemImage: "creditcard") }
         }
     }
 }

@@ -1,9 +1,8 @@
-# Dependabot keeps the GitHub Actions used in CI patched, including security
-# fixes, and updates the SHA pin + trailing version comment together.
+# Dependabot で CI の GitHub Actions を更新し、セキュリティ修正を取り込む。
+# SHA の固定値と末尾のバージョンコメントは一緒に更新する。
 #
-# The Swift package declares no external dependencies. If any are ever added to
-# Package.swift, add a `package-ecosystem: "swift"` block here so Dependabot
-# tracks them too.
+# Swift package に外部依存を追加する場合は `package-ecosystem: "swift"` も設定し、
+# その依存を Dependabot の追跡対象に含める。
 version: 2
 updates:
   - package-ecosystem: "github-actions"

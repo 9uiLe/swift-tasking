@@ -28,7 +28,7 @@ struct ViewTaskStoreTests {
         let gate = Gate()
         store.start(id: "save", lifetime: .screenBound) { _ in await gate.wait() }
         let duplicate = store.start(id: "save", lifetime: .appBound) { _ in
-            Issue.record("A skipped operation executed.")
+            Issue.record("スキップした処理が実行されました。")
         }
         #expect(duplicate == .skipped(.alreadyRunning))
         #expect(store.runningCount(for: "save") == 1)
@@ -230,7 +230,7 @@ struct ViewTaskStoreTests {
         store.close()
         for policy in [TaskStartPolicy.ignoreNew, .cancelExisting, .allowConcurrent] {
             let rejected = store.start(id: "work", lifetime: .appBound, policy: policy) { _ in
-                Issue.record("A closed store admitted work.")
+                Issue.record("受付を閉じた Store が処理を受け付けました。")
             }
             #expect(rejected == .skipped(.closed))
         }
@@ -323,7 +323,7 @@ struct ViewTaskStoreTests {
     }
 
     @Test func cancellationErrorDoesNotReachFailureObserver() async {
-        let store = ViewTaskStore { _, _ in Issue.record("Cancellation was reported as failure.") }
+        let store = ViewTaskStore { _, _ in Issue.record("キャンセルが失敗として報告されました。") }
         store.start(id: "cancel", lifetime: .screenBound) { _ in throw CancellationError() }
         await store.waitForIdle()
         #expect(!store.isRunning(id: "cancel"))

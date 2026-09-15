@@ -1,10 +1,12 @@
-# Security Policy
+# セキュリティポリシー
 
-## Reporting a vulnerability
+日本語 | [English](SECURITY.en.md)
 
-Please use GitHub's **private vulnerability reporting** ("Security" tab →
-"Report a vulnerability") instead of opening a public issue.
+## 脆弱性の報告
 
-## Supported versions
+公開 Issue を作成せず、GitHub の **private vulnerability reporting**
+（「Security」タブ →「Report a vulnerability」）から非公開で報告してください。
 
-Only the latest 0.x release receives fixes.
+## サポート対象バージョン
+
+最新の 0.x リリースのみ修正を提供します。

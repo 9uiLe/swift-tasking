@@ -14,10 +14,13 @@ Tasking は Swift Concurrency の unstructured task に、所有者・寿命・�
 7. [性能特性](performance.md) — 計算量、測定結果、負荷に応じた判断
 8. [リリース設計と運用](releasing.md) — 所有者の認証、準備PR、公開条件、中断からの再開
 
-インストールと基本的な呼び出し方は [README](../README.md)、実行可能な利用例は
+日本語を文書の正本とし、利用・貢献・脆弱性報告の入口には英語版も用意する。
+設計解説・ADR・変更履歴・運用手順は日本語で管理する。
+
+インストールと基本的な呼び出し方は [README](../README.md)（[English](../README.en.md)）、実行可能な利用例は
 [TaskingPrototype](../Examples/TaskingPrototype/Sources/TaskingPrototype/PrototypeApp.swift) を参照する。
 
-## Architecture Decision Records
+## 設計判断（ADR）
 
 各 ADR は、設計上の判断を前提・決定・理由・制約に分けて説明する。
 番号は参照用の識別子であり、読む順序や機能の依存順序を表さない。

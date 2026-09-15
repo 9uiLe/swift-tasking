@@ -1,8 +1,8 @@
 import TaskingCore
 
-/// The cancellation contract shared by `Tasking` and `TaskingCore`.
+/// `Tasking` と `TaskingCore` が共有するキャンセル契約。
 ///
-/// Each access reads the task that is currently executing; this value does not forward a
-/// parent's cancellation into a new unstructured `Task`. Use structured child tasks when
-/// cancellation should propagate.
+/// アクセスするたびに、その時点で実行中のタスクを参照する。
+/// この値は親のキャンセルを新しい非構造化 `Task` に伝播しない。
+/// キャンセルを伝播させる場合は構造化子タスクを使う。
 public typealias CancellationContext = TaskingCore.CancellationContext

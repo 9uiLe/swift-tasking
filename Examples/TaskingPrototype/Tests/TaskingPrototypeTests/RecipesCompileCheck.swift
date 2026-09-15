@@ -2,8 +2,8 @@ import Foundation
 import Tasking
 import TaskingCore
 
-/// Compile checks for the throwing ViewModel, ownership, and policy recipes in
-/// docs/recipes.md. Application dependencies are stubbed; these examples are not executed.
+/// docs/recipes.md の throws を使う ViewModel・所有・ポリシーの例をコンパイル検証する。
+/// アプリケーション依存はスタブで用意し、これらの例は実行しない。
 
 // --- スタブ依存(スニペット外の前提) ---
 
@@ -26,7 +26,7 @@ private struct ProfileUseCaseStub: Sendable {
     func sync() async throws {}
 }
 
-// Cancellation restores presentation state.
+// キャンセル時に表示状態を復元する。
 
 @MainActor
 private final class RecipeSettingsViewModel {
@@ -56,7 +56,7 @@ private final class RecipeSettingsViewModel {
     }
 }
 
-// A generation selects results and cleanup.
+// 世代で結果反映と後処理を選択する。
 
 @MainActor
 private final class RecipeSearchViewModel {
@@ -93,7 +93,7 @@ private final class RecipeSearchViewModel {
     }
 }
 
-// Completion waits include cancelled runs.
+// 完了待ちはキャンセル済みの実行も含む。
 
 @MainActor
 private func recipeAwaitCompletion(
@@ -114,7 +114,7 @@ private func recipeAwaitCompletion(
     await taskStore.awaitCompletion(of: run)
 }
 
-// Shutdown closes admission before waiting.
+// 終了処理は待機前に受付を閉じる。
 
 private actor RecipeSyncCoordinator {
     private let slot = TaskSlot()
@@ -124,7 +124,7 @@ private actor RecipeSyncCoordinator {
     }
 }
 
-// Structured children share the operation lifetime.
+// 構造化子タスクは処理の寿命を共有する。
 
 @MainActor
 private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
@@ -156,7 +156,7 @@ private final class RecipeSyncViewModel {
     }
 }
 
-// The operation holds its owner weakly.
+// 処理は所有者を弱参照で保持する。
 
 @MainActor
 private final class RecipeStoreOwningViewModel {
@@ -181,7 +181,7 @@ private final class RecipeStoreOwningViewModel {
     }
 }
 
-// Action identity and policy are declared together.
+// Action の識別子とポリシーをまとめて宣言する。
 
 private enum RecipeSettingsAction {
     static let save: ActionID = "settings.save"

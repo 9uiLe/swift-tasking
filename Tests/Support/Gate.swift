@@ -1,4 +1,4 @@
-/// A one-shot gate that deliberately ignores cancellation and records arrivals.
+/// 意図的にキャンセルを無視し、到達を記録する一度だけ開くゲート。
 public actor Gate {
     private var isOpen = false
     private var arrivals = 0
@@ -29,8 +29,8 @@ public actor Gate {
     }
 }
 
-/// Synchronous signalling on the main actor lets tests observe the next suspension
-/// of another main-actor task without assuming a scheduler delay.
+/// MainActor 上で同期的に通知することで、スケジューラの遅延を仮定せず、
+/// 別の MainActor タスクの次の中断をテストから観測できる。
 @MainActor
 public final class Checkpoint {
     public private(set) var isReached = false

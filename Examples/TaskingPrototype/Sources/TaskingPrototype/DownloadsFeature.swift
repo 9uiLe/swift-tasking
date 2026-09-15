@@ -1,7 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// Per-item Action IDs independently control download admission and cancellation.
+/// 項目ごとの Action ID で、ダウンロードの受付とキャンセルを個別に制御する。
 enum DownloadAction {
     static func item(_ itemID: String) -> ActionID {
         ActionID("download.item.\(itemID)")
@@ -75,7 +75,7 @@ public struct DownloadsScreen: View {
                 Spacer()
                 switch viewModel.state(of: itemID) {
                 case .idle:
-                    Button("Download") {
+                    Button("ダウンロード") {
                         taskStore.start(
                             id: DownloadAction.item(itemID),
                             lifetime: .screenBound,
@@ -86,7 +86,7 @@ public struct DownloadsScreen: View {
                     }
                 case .downloading:
                     ProgressView()
-                    Button("Cancel", role: .cancel) {
+                    Button("キャンセル", role: .cancel) {
                         taskStore.cancel(id: DownloadAction.item(itemID))
                     }
                 case .done:

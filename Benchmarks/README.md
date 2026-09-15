@@ -1,82 +1,82 @@
-# Tasking benchmarks
+# Tasking のベンチマーク
 
-This executable measures public operations in Release, independently of the correctness
-test runner. It requires macOS 13+ and a Swift 6 toolchain. Run from the repository root:
+正しさを検証するテストランナーから独立して、Release ビルドで公開操作の性能を測定します。
+macOS 13 以降と Swift 6 ツールチェーンが必要です。リポジトリのルートで実行してください。
 
 ```sh
 swift run --package-path Benchmarks -c release TaskingBenchmarks
 ```
 
-The executable prints one JSON line per measurement. A row identifies the scenario,
-metric, run count (`size`), operation count (`operations`), sample, and elapsed
-`milliseconds` for the whole batch. Each scenario has one discarded warmup.
+測定ごとに1行の JSON を出力します。各行はシナリオ、測定項目、実行数（`size`）、
+操作数（`operations`）、サンプル番号、バッチ全体の所要時間（`milliseconds`）を含みます。
+シナリオごとに1回ウォームアップし、その結果は集計から除きます。
 
-## Workloads
+## 負荷条件
 
-| Workload | Measurements |
+| 対象 | 測定項目 |
 |---|---|
-| Store | Start, lifetime hit/miss/count, duplicate rejection, lifetime cancellation, drain, idle wait |
-| Runner | Sequential Action execution and terminal outcomes |
-| Slot | Repeated replacement and drain |
+| Store | 開始、寿命の一致・不一致・件数照会、重複拒否、寿命単位のキャンセル、終了処理、完了待ち |
+| Runner | Action の逐次実行と終了結果 |
+| Slot | 繰り返しの差し替えと終了処理 |
 
-Store batches use one Action ID, up to 100 IDs, or a distinct ID per run. IDs are
-constructed before timing. Every run uses `.screenBound`; hit queries search for
-`.screenBound`, and miss queries search for `.appBound`.
+Store のバッチは、1つの Action ID、最大100個の ID、実行ごとに異なる ID の3通りを使います。
+ID は計測開始前に生成します。すべての実行に `.screenBound` を使い、一致照会では
+`.screenBound`、不一致照会では `.appBound` を検索します。
 
-Store admission and cancellation are synchronous MainActor batches before operations
-get a turn to run. Drain includes task scheduling and the gate fixture. Slot operations
-can reach their gate while replacements are being admitted. Network services, business
-logic, and cancellation handlers in a real application are outside these workloads.
+Store の受付とキャンセルは、処理本体が実行機会を得る前に、MainActor 上の同期バッチとして行います。
+終了処理の計測にはタスクのスケジューリングとゲートの処理も含まれます。
+Slot の処理は、差し替えを受け付けている間にゲートへ到達することがあります。
+実際のアプリケーションのネットワーク処理・業務ロジック・キャンセルハンドラは測定に含みません。
 
-| Executable option | Default | Meaning |
+| 実行オプション | 既定値 | 意味 |
 |---|---|---|
-| `--sizes` | `100,1000,10000` | Run counts to measure |
-| `--samples` | `7` | Measured repetitions after warmup |
-| `--queries` | `1000` | Queries and duplicate-admission attempts per Store batch |
-| `--scenario` | `all` | `all`, `store`, `runner`, or `slot` |
+| `--sizes` | `100,1000,10000` | 測定する実行数 |
+| `--samples` | `7` | ウォームアップ後の測定回数 |
+| `--queries` | `1000` | Store の1バッチあたりの照会・重複受付試行の回数 |
+| `--scenario` | `all` | `all`、`store`、`runner`、`slot` のいずれか |
 
-## Compare source snapshots
+## ソースのスナップショットを比較する
 
 ```sh
 python3 Benchmarks/compare.py --baseline-ref HEAD --output Benchmarks/results/comparison
 ```
 
-`baseline` is the selected git revision; `working` is a snapshot of the checkout's
-Package.swift, Sources, and Tests. Both are built separately using the same benchmark
-source. The script alternates process order across seven samples, running one measured
-repetition plus warmup per scenario in each process. Use `--baseline-path` for a saved
-source directory instead of a git revision.
+`baseline` は指定した Git リビジョン、`working` はチェックアウト内の Package.swift・Sources・Tests の
+スナップショットです。同じベンチマークソースを使い、それぞれを独立してビルドします。
+7つのサンプルでプロセスの実行順を交互に入れ替え、各プロセスではシナリオごとに
+ウォームアップと本計測を1回ずつ行います。保存済みのソースディレクトリを基準にする場合は、
+Git リビジョンの代わりに `--baseline-path` を指定します。
 
-The script accepts `--sizes`, `--samples`, and `--queries`. The comparison requires
-both sources to support the public APIs exercised by the benchmark.
+`--sizes`、`--samples`、`--queries` を指定できます。
+比較する両方のソースが、ベンチマークで使う公開 API に対応している必要があります。
 
-| Output | Contents |
+| 出力 | 内容 |
 |---|---|
-| `metadata.json` | Environment, source hashes, baseline revision/path, snapshot and binary locations |
-| `samples.jsonl` | Raw timing rows, with the source label and process sample number |
-| `summary.json` | Medians per metric and `working / baseline` ratios |
-| `memory.json` | Whole-process peak resident memory for each process |
-| `baseline-build.log`, `working-build.log` | Build diagnostics |
+| `metadata.json` | 環境、ソースハッシュ、比較元のリビジョン・パス、スナップショットとバイナリの場所 |
+| `samples.jsonl` | ソースのラベルとプロセスのサンプル番号を含む、時間計測の生データ |
+| `summary.json` | 測定項目ごとの中央値と `working / baseline` の比率 |
+| `memory.json` | 各プロセス全体の最大常駐メモリ |
+| `baseline-build.log`、`working-build.log` | ビルドの診断情報 |
 
-Snapshots remain in the temporary directory printed by the script. Source hashes include
-Package.swift and Sources, including source comments. Preserve measured identities when
-documentation or code changes. Apple's `/usr/bin/time -l` reports peak RSS in bytes;
-this includes the Swift runtime and benchmark fixture, not just Tasking allocations.
+スナップショットは、スクリプトが表示する一時ディレクトリに残ります。
+ソースハッシュの対象は Package.swift と Sources で、ソースコメントも含みます。
+文書やコードを更新しても、測定時の識別情報は保持してください。
+Apple の `/usr/bin/time -l` は最大 RSS をバイト単位で返します。この値には Swift ランタイムと
+測定用コードも含まれ、Tasking のメモリ確保量だけを表すものではありません。
 
-## Interpret measurements
+## 測定結果を読み取る
 
-Use the same hardware and toolchain for both builds. Do not run timing comparisons
-alongside builds, tests, profiling, or other deliberate CPU-intensive work. Report
-workload and variation with the medians.
+両方のビルドに同じハードウェアとツールチェーンを使います。
+時間比較と同時に、ビルド・テスト・プロファイリングなどの CPU 負荷が高い処理を実行しないでください。
+中央値と一緒に、負荷条件とばらつきも報告します。
 
-Hit and miss queries have different costs: a hit may return immediately, while a miss
-must scan every tracked run. Report them separately. Absolute latency thresholds do
-not belong in CI correctness tests. See [performance characteristics](../docs/performance.md)
-for recorded measurements and the implications for application workloads.
+一致照会は直ちに戻れる場合がありますが、不一致照会は追跡中のすべての実行を走査します。
+コストが異なるため、それぞれを分けて報告してください。CI の正しさのテストに絶対時間のしきい値は設けません。
+測定記録とアプリケーションへの示唆は [性能特性](../docs/performance.md) を参照してください。
 
-## Profile with Instruments
+## Instruments でプロファイルする
 
-Build before launching Time Profiler:
+Time Profiler の起動前にビルドします。
 
 ```sh
 swift build --package-path Benchmarks -c release
@@ -86,8 +86,8 @@ xcrun xctrace record --template 'Time Profiler' --time-limit 10s \
   --sizes 10000 --samples 200 --queries 1
 ```
 
-One query per batch emphasizes admission, cancellation, and completion. Higher query
-counts emphasize lookups. Time-limited launches may terminate the executable; verify
-that the saved trace can be exported. Inclusive CPU sample percentages can overlap,
-and captures of different durations are not direct speedup measurements. Keep profiler
-observations separate from uninstrumented wall-clock timings.
+照会を1バッチあたり1回にすると受付・キャンセル・完了が中心になり、照会数を増やすと検索が中心になります。
+時間制限付きの起動では実行ファイルが途中で終了する場合があるため、保存したトレースを
+エクスポートできることを確認してください。子呼び出しを含む CPU サンプルの割合は重複する場合があり、
+異なる長さの記録をそのまま高速化の倍率として比較することはできません。
+プロファイラによる観測と、計測機器を付けない実時間測定は分けて扱います。

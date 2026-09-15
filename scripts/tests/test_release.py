@@ -12,29 +12,32 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from release import (BRANCH, INSTALLATION, OWNER, RELEASE_HEADING, REMOTE, REPOSITORY, REQUIRED_JOBS, WORKFLOW,
+from release import (BRANCH, OWNER, README_PATHS, RELEASE_HEADING, REMOTE, REPOSITORY, REQUIRED_JOBS, WORKFLOW,
                      Release, ReleaseError, prepare_documents, release_notes,
-                     successful_run, validate_jobs, version_key)
+                     successful_run, validate_jobs, validate_readmes, version_key)
 
 
-UNRELEASED = f"""# Changelog
+UNRELEASED = f"""# 変更履歴
 
 ## [Unreleased]
 
-### Changed
+### 変更
 
-- Define task shutdown contracts.
+- タスクの終了契約を定義する。
 
 ## [0.2.0] - 2026-07-15
 
-- Previous release.
+- 前回のリリース。
 
 [Unreleased]: https://github.com/{REPOSITORY}/compare/0.2.0...HEAD
 [0.2.0]: https://github.com/{REPOSITORY}/releases/tag/0.2.0
 """
-README = f'.package(url: "{REMOTE}", from: "0.2.0")\n'
-CHANGELOG, RELEASE_README = prepare_documents(UNRELEASED, README, "0.3.0", date(2026, 9, 16))
-NOTES = "### Changed\n\n- Define task shutdown contracts."
+READMES = {
+    "README.md": f'# 導入\n\n.package(url: "{REMOTE}", from: "0.2.0")\n',
+    "README.en.md": f'# Installation\n\n.package(url: "{REMOTE}", from: "0.2.0")\n',
+}
+CHANGELOG, RELEASE_READMES = prepare_documents(UNRELEASED, READMES, "0.3.0", date(2026, 9, 16))
+NOTES = "### 変更\n\n- タスクの終了契約を定義する。"
 
 
 def ci_run(commit):
@@ -53,19 +56,17 @@ class DocumentTests(unittest.TestCase):
     def test_repository_documents_can_be_prepared_or_checked_without_manual_reformatting(self):
         root = Path(__file__).resolve().parents[2]
         changelog = (root / "CHANGELOG.md").read_text()
-        readme = (root / "README.md").read_text()
+        readmes = {name: (root / name).read_text(encoding="utf-8") for name in README_PATHS}
         latest = RELEASE_HEADING.search(changelog)
         self.assertIsNotNone(latest)
-        dependencies = INSTALLATION.findall(readme)
-        self.assertEqual(len(dependencies), 1)
-        self.assertEqual(dependencies[0][1], latest.group(1))
+        validate_readmes(readmes, latest.group(1))
         pending = changelog.split("## [Unreleased]\n")[1].split(latest.group(0), 1)[0].strip()
         if pending:
             major, minor, _ = version_key(latest.group(1))
             version = f"{major}.{minor + 1}.0"
-            prepared, dependency = prepare_documents(changelog, readme, version, date(2026, 9, 16))
+            prepared, dependency = prepare_documents(changelog, readmes, version, date(2026, 9, 16))
             self.assertEqual(release_notes(prepared, version), pending)
-            self.assertEqual(INSTALLATION.findall(dependency)[0][1], version)
+            validate_readmes(dependency, version)
         else:
             self.assertTrue(release_notes(changelog, latest.group(1)))
 
@@ -75,7 +76,7 @@ class DocumentTests(unittest.TestCase):
         self.assertIn("compare/0.2.0...0.3.0", CHANGELOG)
         self.assertIn("compare/0.3.0...HEAD", CHANGELOG)
         self.assertIn(UNRELEASED[UNRELEASED.index("## [0.2.0]"):].split("[Unreleased]:")[0], CHANGELOG)
-        self.assertEqual(RELEASE_README, README.replace("0.2.0", "0.3.0"))
+        self.assertEqual(RELEASE_READMES, {name: content.replace("0.2.0", "0.3.0") for name, content in READMES.items()})
 
     def test_only_stable_semantic_versions_are_accepted(self):
         self.assertGreater(version_key("0.10.0"), version_key("0.9.9"))
@@ -83,24 +84,33 @@ class DocumentTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ReleaseError):
                 version_key(version)
 
-    def test_preparation_rejects_missing_notes_ambiguous_dependency_and_old_version(self):
+    def test_preparation_rejects_missing_notes_and_old_version(self):
         cases = [
-            (UNRELEASED.replace("- Define task shutdown contracts.", ""), README, "0.3.0"),
-            (UNRELEASED, "no dependency", "0.3.0"),
-            (UNRELEASED, README * 2, "0.3.0"),
-            (UNRELEASED, README, "0.2.0"),
-            (UNRELEASED.replace("0.2.0...HEAD", "0.1.0...HEAD"), README, "0.3.0"),
-            (UNRELEASED.replace("## [Unreleased]", "## Changes"), README, "0.3.0"),
+            (UNRELEASED.replace("- タスクの終了契約を定義する。", ""), READMES, "0.3.0"),
+            (UNRELEASED, READMES, "0.2.0"),
+            (UNRELEASED.replace("0.2.0...HEAD", "0.1.0...HEAD"), READMES, "0.3.0"),
+            (UNRELEASED.replace("## [Unreleased]", "## Changes"), READMES, "0.3.0"),
         ]
-        for changelog, readme, version in cases:
-            with self.subTest(changelog=changelog, readme=readme, version=version), self.assertRaises(ReleaseError):
-                prepare_documents(changelog, readme, version, date.today())
+        for changelog, readmes, version in cases:
+            with self.subTest(changelog=changelog, readmes=readmes, version=version), self.assertRaises(ReleaseError):
+                prepare_documents(changelog, readmes, version, date.today())
 
     def test_publication_requires_latest_release_notes_and_a_valid_date(self):
         for changelog, version in ((CHANGELOG, "0.2.0"), (CHANGELOG.replace("09-16", "02-30"), "0.3.0"),
-                                   (CHANGELOG.replace("- Define task shutdown contracts.", ""), "0.3.0")):
+                                   (CHANGELOG.replace("- タスクの終了契約を定義する。", ""), "0.3.0")):
             with self.subTest(version=version), self.assertRaises((ReleaseError, ValueError)):
                 release_notes(changelog, version)
+
+    def test_preparation_requires_both_readmes_to_have_one_matching_dependency(self):
+        for name in README_PATHS:
+            for content in (None, "依存指定なし", READMES[name] * 2, READMES[name].replace("0.2.0", "0.1.0")):
+                readmes = dict(READMES)
+                if content is None:
+                    del readmes[name]
+                else:
+                    readmes[name] = content
+                with self.subTest(name=name, content=content), self.assertRaisesRegex(ReleaseError, name):
+                    prepare_documents(UNRELEASED, readmes, "0.3.0", date.today())
 
 
 class CIValidationTests(unittest.TestCase):
@@ -255,15 +265,21 @@ class ReleaseFlowTests(unittest.TestCase):
         local.git("config", "commit.gpgsign", "false")
         local.git("remote", "add", "origin", str(self.remote))
         (self.root / "CHANGELOG.md").write_text(CHANGELOG)
-        (self.root / "README.md").write_text(RELEASE_README)
+        for name, content in RELEASE_READMES.items():
+            (self.root / name).write_text(content, encoding="utf-8")
         local.git("add", ".")
         local.git("commit", "-m", "Fixture release")
         local.git("push", "origin", BRANCH)
         self.release = SandboxRelease(self.root, self.remote)
 
-    def commit_documents(self, changelog, readme):
+    def commit_documents(self, changelog, readmes):
         (self.root / "CHANGELOG.md").write_text(changelog)
-        (self.root / "README.md").write_text(readme)
+        for name in README_PATHS:
+            path = self.root / name
+            if name in readmes:
+                path.write_text(readmes[name], encoding="utf-8")
+            else:
+                path.unlink(missing_ok=True)
         self.release.git("add", ".")
         self.release.git("commit", "-m", "Fixture update")
         self.release.git("push", "origin", BRANCH)
@@ -305,7 +321,7 @@ class ReleaseFlowTests(unittest.TestCase):
 
     def test_published_release_is_idempotent_even_after_master_advances(self):
         self.release.publish("0.3.0")
-        self.commit_documents(CHANGELOG + "\n", RELEASE_README)
+        self.commit_documents(CHANGELOG + "\n", RELEASE_READMES)
         self.release.writes.clear()
         self.release.publish("0.3.0")
         self.assertEqual(self.release.writes, [])
@@ -321,7 +337,7 @@ class ReleaseFlowTests(unittest.TestCase):
                 with self.assertRaises(ReleaseError):
                     self.release.publish("0.3.0")
                 original = self.release.tags["0.3.0"]
-                self.commit_documents(CHANGELOG + "\n" * (2 if operation == "edit" else 1), RELEASE_README)
+                self.commit_documents(CHANGELOG + "\n" * (2 if operation == "edit" else 1), RELEASE_READMES)
                 self.release.fail = None
                 self.release.writes.clear()
                 self.release.publish("0.3.0")
@@ -349,51 +365,67 @@ class ReleaseFlowTests(unittest.TestCase):
                 self.assert_stops_without_writes()
             self.release.repository[key] = previous
         self.release.login = "someone-else"
-        self.assert_stops_without_writes("Authenticate gh")
+        self.assert_stops_without_writes("として gh を認証")
         self.release.login = OWNER
         self.release.origin = "https://github.com/fork/package.git"
-        self.assert_stops_without_writes("origin must")
+        self.assert_stops_without_writes("origin は")
 
     def test_dirty_worktree_and_actions_environment_stop_before_authentication(self):
         (self.root / "untracked").write_text("change")
-        self.assert_stops_without_writes("working-tree")
+        self.assert_stops_without_writes("作業ツリー")
         self.assertEqual(self.release.reads, [])
         (self.root / "untracked").unlink()
         with patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
-            self.assert_stops_without_writes("locally")
+            self.assert_stops_without_writes("ローカル")
         self.assertEqual(self.release.reads, [])
 
     def test_failed_ci_missing_jobs_and_disabled_immutability_cannot_create_tags(self):
         self.release.runs[0]["conclusion"] = "failure"
-        self.assert_stops_without_writes("has not succeeded")
+        self.assert_stops_without_writes("成功していません")
         self.release.runs[0]["conclusion"] = "success"
         jobs = self.release.jobs
         self.release.jobs = jobs[:1]
-        self.assert_stops_without_writes("must succeed")
+        self.assert_stops_without_writes("成功している必要")
         self.release.jobs = jobs
         self.release.immutable = False
         self.assert_stops_without_writes("Immutable releases")
 
     def test_unmerged_release_documents_cannot_create_tags(self):
-        self.commit_documents(UNRELEASED, README)
-        self.assert_stops_without_writes("first CHANGELOG release")
+        self.commit_documents(UNRELEASED, READMES)
+        self.assert_stops_without_writes("CHANGELOG の最新リリース")
 
     def test_new_unreleased_changes_cannot_be_published_under_the_prepared_version(self):
-        self.commit_documents(CHANGELOG.replace("## [Unreleased]\n", "## [Unreleased]\n\n- Later change.\n"), RELEASE_README)
-        self.assert_stops_without_writes("Unreleased must be empty")
+        self.commit_documents(CHANGELOG.replace("## [Unreleased]\n", "## [Unreleased]\n\n- Later change.\n"), RELEASE_READMES)
+        self.assert_stops_without_writes("Unreleased を空")
 
     def test_a_tag_outside_master_cannot_be_published(self):
         tree = self.release.git("rev-parse", "HEAD^{tree}")
         self.release.tags["0.3.0"] = self.release.git("commit-tree", tree, "-m", "Unrelated root")
         self.assert_stops_without_writes()
 
-    def test_readme_must_install_the_release_version(self):
-        self.commit_documents(CHANGELOG, README)
-        self.assert_stops_without_writes("README")
+    def test_either_missing_ambiguous_or_outdated_readme_prevents_publication(self):
+        for name in README_PATHS:
+            for content in (None, "依存指定なし", RELEASE_READMES[name] * 2, READMES[name]):
+                readmes = dict(RELEASE_READMES)
+                if content is None:
+                    del readmes[name]
+                else:
+                    readmes[name] = content
+                with self.subTest(name=name, content=content):
+                    self.commit_documents(CHANGELOG, readmes)
+                    self.assert_stops_without_writes(name)
+
+    def test_publication_checks_both_readmes_at_the_tag_commit_after_master_advances(self):
+        original = self.release.master
+        self.release.tags["0.3.0"] = original
+        self.commit_documents(CHANGELOG, {"README.md": RELEASE_READMES["README.md"]})
+        plan = self.release.plan("0.3.0")
+        self.assertEqual(plan.commit, original)
+        self.assertEqual(self.release.writes, [])
 
     def test_an_existing_newer_version_prevents_publication(self):
         self.release.tags["0.4.0"] = self.release.master
-        self.assert_stops_without_writes("newer or equal")
+        self.assert_stops_without_writes("同じか新しい")
 
     def test_existing_release_with_different_owner_commit_notes_assets_or_immutability_is_rejected(self):
         self.release.publish("0.3.0")
@@ -410,7 +442,7 @@ class ReleaseFlowTests(unittest.TestCase):
         self.release.publish("0.3.0")
         self.release.tags.pop("0.3.0")
         self.release.writes.clear()
-        self.assert_stops_without_writes("without the expected annotated tag")
+        self.assert_stops_without_writes("対応する注釈付きタグのない")
 
     def test_a_tag_changed_or_deleted_after_validation_cannot_be_recreated(self):
         plan = self.release.plan("0.3.0")
@@ -422,11 +454,11 @@ class ReleaseFlowTests(unittest.TestCase):
         self.release.tags.pop("0.3.0")
         self.release.master = "b" * 40
         with patch.object(self.release, "plan", return_value=plan):
-            self.assert_stops_without_writes("master changed")
+            self.assert_stops_without_writes("master が変更")
 
     def test_a_tag_moved_while_creating_the_draft_cannot_be_published(self):
         self.release.move_tag_on_draft = True
-        with self.assertRaisesRegex(ReleaseError, "before publication"):
+        with self.assertRaisesRegex(ReleaseError, "公開前"):
             self.release.publish("0.3.0")
         self.assertTrue(self.release.releases[0]["draft"])
         self.assertNotIn(("gh", "release", "edit"), self.release.writes)
@@ -441,32 +473,50 @@ class ReleaseFlowTests(unittest.TestCase):
             self.release.find_release("0.3.0")
 
     def test_prepare_dry_run_preserves_files_branches_and_remote_state(self):
-        self.commit_documents(UNRELEASED, README)
+        self.commit_documents(UNRELEASED, READMES)
         before = self.release.git("rev-parse", "HEAD")
         self.release.prepare("0.3.0", dry_run=True)
         self.assertEqual(self.release.git("rev-parse", "HEAD"), before)
         self.assertEqual(self.release.git("branch", "--show-current"), BRANCH)
         self.assertEqual((self.root / "CHANGELOG.md").read_text(), UNRELEASED)
+        for name, content in READMES.items():
+            self.assertEqual((self.root / name).read_text(encoding="utf-8"), content)
         self.assertEqual(self.release.writes, [])
 
+    def test_prepare_rejects_inconsistent_translations_before_creating_a_branch(self):
+        for name in README_PATHS:
+            with self.subTest(name=name):
+                self.commit_documents(UNRELEASED, dict(READMES, **{name: RELEASE_READMES[name]}))
+                before = self.release.git("rev-parse", "HEAD")
+                with self.assertRaisesRegex(ReleaseError, name):
+                    self.release.prepare("0.3.0")
+                self.assertEqual(self.release.git("rev-parse", "HEAD"), before)
+                self.assertEqual(self.release.git("branch", "--show-current"), BRANCH)
+                self.assertEqual(self.release.git("status", "--porcelain"), "")
+                self.assertEqual(self.release.writes, [])
+
     def test_prepare_commits_and_pushes_versioned_documents_and_opens_a_pr(self):
-        self.commit_documents(UNRELEASED, README)
+        self.commit_documents(UNRELEASED, READMES)
         self.release.prepare("0.3.0")
         self.assertEqual(self.release.git("branch", "--show-current"), "release/0.3.0")
         self.assertEqual(self.release.git("status", "--porcelain"), "")
         self.assertEqual(release_notes((self.root / "CHANGELOG.md").read_text(), "0.3.0"), NOTES)
-        self.assertEqual((self.root / "README.md").read_text(), RELEASE_README)
+        for name, content in RELEASE_READMES.items():
+            self.assertEqual((self.root / name).read_text(encoding="utf-8"), content)
         self.assertIn(self.release.git("rev-parse", "HEAD"), self.release.git("ls-remote", "origin", "refs/heads/release/0.3.0"))
         self.assertIn("\n\n", self.release.pr_body)
         self.assertNotIn("\\n", self.release.pr_body)
         args = self.release.pr_arguments
+        self.assertEqual(args[args.index("--title") + 1], "0.3.0 のリリースを準備")
+        self.assertIn("## 概要\n\n", self.release.pr_body)
+        self.assertIn(NOTES, self.release.pr_body)
         self.assertEqual(args[args.index("--base") + 1], BRANCH)
         self.assertEqual(args[args.index("--head") + 1], "release/0.3.0")
-        with self.assertRaisesRegex(ReleaseError, "already exists"):
+        with self.assertRaisesRegex(ReleaseError, "既に存在"):
             self.release.prepare("0.3.0")
 
     def test_prepare_uses_the_validated_commit_if_the_tracking_ref_advances(self):
-        self.commit_documents(UNRELEASED, README)
+        self.commit_documents(UNRELEASED, READMES)
         validated = self.release.master
         tree = self.release.git("rev-parse", "HEAD^{tree}")
         advanced = self.release.git("commit-tree", tree, "-p", validated, "-m", "Concurrent update")
@@ -498,13 +548,13 @@ class TransportTests(unittest.TestCase):
     def test_lightweight_and_nested_tags_are_never_accepted(self):
         release = Release(Path.cwd())
         with patch.object(release, "api", return_value={"object": {"type": "commit", "sha": "a" * 40}}):
-            with self.assertRaisesRegex(ReleaseError, "annotated"):
+            with self.assertRaisesRegex(ReleaseError, "注釈付き"):
                 release.tag("0.3.0")
         with patch.object(release, "api", side_effect=[
             {"object": {"type": "tag", "sha": "a" * 40}},
             {"tag": "0.3.0", "object": {"type": "tag", "sha": "b" * 40}},
         ]):
-            with self.assertRaisesRegex(ReleaseError, "directly"):
+            with self.assertRaisesRegex(ReleaseError, "直接"):
                 release.tag("0.3.0")
 
 

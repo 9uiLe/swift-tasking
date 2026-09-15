@@ -82,11 +82,11 @@ struct TaskSlotTests {
         await gate.waitForArrivals()
         await slot.close()
         await slot.close()
-        #expect(await !slot.replace { _ in Issue.record("Closed work executed.") })
+        #expect(await !slot.replace { _ in Issue.record("受付の閉鎖後に処理が実行されました。") })
         await gate.open()
         await slot.waitForIdle()
         await slot.cancelAndWaitForIdle()
-        #expect(await !slot.replace { _ in Issue.record("Closed work executed.") })
+        #expect(await !slot.replace { _ in Issue.record("受付の閉鎖後に処理が実行されました。") })
     }
 
     @Test func teardownClosesAdmissionBeforeCancellationIsObserved() async {
@@ -105,7 +105,7 @@ struct TaskSlotTests {
         }
         let teardown = Task { await slot.cancelAndWaitForIdle() }
         await cancelled.wait()
-        #expect(await !slot.replace { _ in Issue.record("Teardown admitted work.") })
+        #expect(await !slot.replace { _ in Issue.record("終了処理中に新しい処理を受け付けました。") })
         await release.open()
         await teardown.value
         await slot.cancelAndWaitForIdle()

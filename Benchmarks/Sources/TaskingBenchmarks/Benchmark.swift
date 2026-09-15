@@ -74,7 +74,7 @@ struct Benchmark {
         var duplicates = 0
         for _ in 0..<queries {
             let outcome = store.start(id: ids[0], lifetime: .screenBound, operation: { _ in
-                preconditionFailure("Duplicate operation executed")
+                preconditionFailure("重複した処理が実行されました")
             })
             if outcome.run == nil { duplicates += 1 }
         }

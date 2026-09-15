@@ -15,7 +15,7 @@ product であり、1つのタグで同時にバージョンが決まる。
 | GitHub の保護設定 | 書き込み主体とタグの変更を制限し、公開したソースを固定する |
 
 バージョンは `X.Y.Z` 形式の注釈付きGitタグで表す。タグはコミットを直接指し、
-GitHub ReleaseにはそのコミットのCHANGELOG本文を掲載する。バイナリーは添付しない。
+GitHub Releaseにはそのコミットの日本語のCHANGELOG本文を掲載する。バイナリーは添付しない。
 **SwiftPMはタグ作成時点でそのバージョンを取得できる**ため、公開条件の検査はタグ作成前に完了させる。
 Releaseはドラフトで作成し、タグと本文の一致を確認してから公開する。
 
@@ -52,8 +52,8 @@ Swift toolsのバージョンはコンパイラ要件であり、packageのリ�
 
 ### 1. 文書とPRを準備する
 
-機能や修正のPRでは、CHANGELOGの `## [Unreleased]` に利用者向けの項目を書く。
-破壊的変更には `Breaking` と必要な対応を記す。Release本文にも同じ内容を掲載するため、
+機能や修正のPRでは、CHANGELOGの `## [Unreleased]` に利用者向けの項目を日本語で書く。
+破壊的変更には `破壊的変更` と必要な対応を記す。Release本文にも同じ内容を掲載するため、
 項目内のリンクには完全なURLを使う。
 
 ```sh
@@ -63,16 +63,18 @@ Swift toolsのバージョンはコンパイラ要件であり、packageのリ�
 
 準備する番号はCHANGELOGと既存安定版タグより新しく、同名のタグ・Release・準備ブランチが
 存在しないことを要求する。`prepare` は取得したmasterの完全なSHAを起点に `release/X.Y.Z` を作り、
-Unreleasedの項目を日付付きのリリース節へ移す。比較リンクとREADMEの依存バージョンも更新し、
+Unreleasedの項目を日付付きのリリース節へ移す。比較リンクと `README.md`・`README.en.md` 両方の依存バージョンも更新し、
 文書をコミット・pushしてmaster宛てのPRを作る。
 
-READMEの公開依存指定は次の形式を1か所に置く。番号はCHANGELOGの最新リリースと合わせる。
+公開依存指定は、両方のREADMEに次の形式をそれぞれ1か所ずつ置く。番号はCHANGELOGの最新リリースと合わせる。
+prepareは更新前にも両言語の番号を照合し、ファイルの欠落・依存指定の重複・番号の不一致があれば停止する。
 
 ```swift
 .package(url: "https://github.com/9uiLe/swift-tasking.git", from: "X.Y.Z")
 ```
 
 CHANGELOGは `## [X.Y.Z] - YYYY-MM-DD` と比較リンクを使う。
+`[Unreleased]` とバージョン見出しは機械処理に使うため、この形式を保つ。
 prepare後は `## [Unreleased]` が空になる。
 
 ### 2. 準備PRをマージする
@@ -99,7 +101,7 @@ prepare後は `## [Unreleased]` が空になる。
 | 認証 | `9uiLe` として認証し、対象リポジトリのadmin権限を持つ |
 | リポジトリ | 公開の `9uiLe/swift-tasking`、既定ブランチmaster、Immutable releases有効 |
 | ソース | 完全なコミットSHAで特定され、masterの履歴に含まれる |
-| 文書 | CHANGELOGの最新節とREADME依存が指定番号に一致し、日付・リリース項目が有効でUnreleasedが空 |
+| 文書 | 対象コミットのCHANGELOGの最新節と両言語のREADME依存が指定番号に一致し、日付・リリース項目が有効でUnreleasedが空 |
 | CI実行 | 有効な `ci.yml`、対象リポジトリ、master、pushイベント、対象SHAがすべて一致する最新実行・再実行が成功 |
 | CIジョブ | その実行の両ジョブが対象SHAに対して各1件あり、両方成功 |
 | タグ | 注釈付きで、指定番号の名前を持ち、対象コミットを直接指す |

@@ -122,4 +122,4 @@ Debug / Release / Thread Sanitizer と strict concurrency の検査を行う。
 - [用語集](glossary.md): 値型と状態の定義
 - [ライフタイムと所有構成](lifetimes.md): 所有者の配置と解放
 - [性能特性](performance.md): 操作ごとの計算量と測定条件
-- [設計判断一覧](README.md#architecture-decision-records): 各判断の根拠と制約
+- [設計判断一覧](README.md#設計判断adr): 各判断の根拠と制約

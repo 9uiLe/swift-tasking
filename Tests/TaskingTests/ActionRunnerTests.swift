@@ -54,9 +54,9 @@ struct ActionRunnerTests {
 
         let secondOutcome = await runner.run(
             ActionDescriptor(id: "refresh"),
-            onStart: { _ in Issue.record("A skipped run must not report a start.") }
+            onStart: { _ in Issue.record("スキップした実行は開始を通知してはいけません。") }
         ) { _ in
-            Issue.record("A skipped operation must not execute.")
+            Issue.record("スキップした処理は実行してはいけません。")
             return "second"
         }
 
@@ -107,7 +107,7 @@ struct ActionRunnerTests {
         }
 
         guard case .cancelled = outcome else {
-            Issue.record("Expected cancelled outcome.")
+            Issue.record("キャンセルの結果が必要です。")
             return
         }
     }
@@ -120,7 +120,7 @@ struct ActionRunnerTests {
         }
 
         guard case let .failed(failure) = outcome else {
-            Issue.record("Expected failed outcome.")
+            Issue.record("失敗の結果が必要です。")
             return
         }
         #expect(failure.typeName.contains("SampleError"))

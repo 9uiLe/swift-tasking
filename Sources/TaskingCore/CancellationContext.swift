@@ -1,19 +1,18 @@
-/// A value for explicitly passing the current task's cooperative cancellation state.
+/// 現在のタスクの協調キャンセル状態を明示的に渡すための値。
 ///
-/// Call `check()` before and after long-running work and important suspension points.
-/// The value does not capture or forward a cancellation token: every access reads the
-/// task that is currently executing. Keep work in structured child tasks when cancellation
-/// should propagate. Passing this value into a new unstructured `Task` does not connect that
-/// task to its parent's cancellation.
+/// 長い処理や重要な中断点の前後で `check()` を呼ぶこと。
+/// キャンセルトークンを捕捉・転送する値ではなく、アクセスするたびに実行中のタスクを参照する。
+/// キャンセルを伝播させる場合は構造化子タスクで処理を行う。
+/// 新しい非構造化 `Task` にこの値を渡しても、親のキャンセルには接続されない。
 public struct CancellationContext: Sendable {
     public init() {}
 
-    /// Whether cancellation has been requested for the currently running task.
+    /// 現在実行中のタスクにキャンセルが要求されているかどうか。
     public var isCancelled: Bool {
         Task.isCancelled
     }
 
-    /// Throws `CancellationError` if cancellation has been requested for the current task.
+    /// 現在のタスクにキャンセルが要求されていれば `CancellationError` を送出する。
     public func check() throws {
         try Task.checkCancellation()
     }

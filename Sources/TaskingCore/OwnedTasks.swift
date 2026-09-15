@@ -1,4 +1,4 @@
-// Inherited contexts retain this identity, preventing address reuse while a marker is live.
+// 継承したコンテキストがこの識別子を保持し、マーカーの生存中にアドレスが再利用されるのを防ぐ。
 package final class TaskOwnership: Hashable, Sendable {
     @TaskLocal package static var current: Set<TaskOwnership> = []
 
@@ -17,7 +17,7 @@ package final class TaskOwnership: Hashable, Sendable {
     }
 }
 
-/// Handle ownership is independent of admission and duplicate-policy tracking.
+/// ハンドルの所有は、受付や重複ポリシーの追跡から独立している。
 package struct OwnedTasks<Key: Hashable & Sendable>: Sendable {
     private struct Entry: Sendable {
         let handle: Task<Void, Never>
@@ -52,7 +52,7 @@ package struct OwnedTasks<Key: Hashable & Sendable>: Sendable {
     package func handleToWait(for key: Key) -> Task<Void, Never>? {
         guard let entry = entries[key] else { return nil }
         guard !TaskOwnership.current.contains(entry.ownership) else {
-            assertionFailure("Cannot wait for a task in the current ownership context.")
+            assertionFailure("現在の所有文脈に属するタスクの終了を待つことはできません。")
             return nil
         }
         return entry.handle
@@ -63,7 +63,7 @@ package struct OwnedTasks<Key: Hashable & Sendable>: Sendable {
         let excluded = Set(entries.compactMap { key, entry in
             TaskOwnership.current.contains(entry.ownership) ? key : nil
         })
-        assert(excluded.isEmpty, "Cannot wait for idle from an owned operation; its context was excluded.")
+        assert(excluded.isEmpty, "所有される処理から全体の完了を待つことはできません。その所有文脈を待機対象から除外しました。")
         return excluded
     }
 
