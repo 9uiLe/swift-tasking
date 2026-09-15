@@ -1,9 +1,9 @@
+import Foundation
 import Tasking
 import TaskingCore
 
-/// docs/recipes.md のコード断片が(依存のスタブ化以外)そのままコンパイル
-/// できることの検証。実行はしない。スニペットに構文・型エラーがあれば
-/// このファイルがビルドを落とす。
+/// Compile checks for the throwing ViewModel, ownership, and policy recipes in
+/// docs/recipes.md. Application dependencies are stubbed; these examples are not executed.
 
 // --- スタブ依存(スニペット外の前提) ---
 
@@ -26,7 +26,7 @@ private struct ProfileUseCaseStub: Sendable {
     func sync() async throws {}
 }
 
-// --- レシピ 1: キャンセル時は loading state を戻してから rethrow ---
+// Cancellation restores presentation state.
 
 @MainActor
 private final class RecipeSettingsViewModel {
@@ -56,22 +56,24 @@ private final class RecipeSettingsViewModel {
     }
 }
 
-// --- レシピ 2: .cancelExisting の後始末は世代でガードする ---
+// A generation selects results and cleanup.
 
 @MainActor
 private final class RecipeSearchViewModel {
-    private var generation = 0
+    private var latestSearch = UUID()
     private(set) var isSearching = false
     private(set) var results: [SearchResult] = []
+    private(set) var errorMessage: String?
     private let searchUseCase = SearchUseCaseStub()
 
     func search(term: String, cancellation: CancellationContext) async throws {
-        generation += 1
-        let currentGeneration = generation
+        let search = UUID()
+        latestSearch = search
         isSearching = true
+        errorMessage = nil
 
         defer {
-            if generation == currentGeneration {
+            if latestSearch == search {
                 isSearching = false
             }
         }
@@ -80,16 +82,18 @@ private final class RecipeSearchViewModel {
             try cancellation.check()
             let newResults = try await searchUseCase.search(term)
             try cancellation.check()
-            if generation == currentGeneration {
+            if latestSearch == search {
                 results = newResults
             }
         } catch let error as CancellationError {
             throw error
+        } catch {
+            if latestSearch == search { errorMessage = String(describing: error) }
         }
     }
 }
 
-// --- レシピ 3: tracking 解除後の実終了は run handle 経由で待つ ---
+// Completion waits include cancelled runs.
 
 @MainActor
 private func recipeAwaitCompletion(
@@ -110,7 +114,7 @@ private func recipeAwaitCompletion(
     await taskStore.awaitCompletion(of: run)
 }
 
-// --- レシピ 4: TaskSlot の teardown は admission を閉じてから待つ ---
+// Shutdown closes admission before waiting.
 
 private actor RecipeSyncCoordinator {
     private let slot = TaskSlot()
@@ -120,41 +124,64 @@ private actor RecipeSyncCoordinator {
     }
 }
 
-// --- レシピ 5: operation 内で unstructured task を作らない(推奨形) ---
+// Structured children share the operation lifetime.
 
 @MainActor
 private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
     let profileUseCase = ProfileUseCaseStub()
     let settingsUseCase = SettingsUseCaseStub()
 
+    let viewModel = RecipeSyncViewModel()
     viewTaskStore.start(id: "sync", lifetime: .screenBound) { cancellation in
-        async let profile: Void = profileUseCase.sync()
-        async let settings: Void = settingsUseCase.sync()
-
-        try cancellation.check()
-        _ = try await (profile, settings)
-        try cancellation.check()
+        do {
+            try cancellation.check()
+            async let profile: Void = profileUseCase.sync()
+            async let settings: Void = settingsUseCase.sync()
+            _ = try await (profile, settings)
+            try cancellation.check()
+        } catch is CancellationError {
+            return
+        } catch {
+            viewModel.recordSyncFailure(error)
+        }
     }
 }
 
-// --- レシピ 6: operation から store owner を強参照しない ---
+@MainActor
+private final class RecipeSyncViewModel {
+    private(set) var failure: ActionFailure?
+
+    func recordSyncFailure(_ error: any Error) {
+        failure = ActionFailure(error: error)
+    }
+}
+
+// The operation holds its owner weakly.
 
 @MainActor
 private final class RecipeStoreOwningViewModel {
     let store = ViewTaskStore()
     private let syncUseCase = SyncUseCaseStub()
+    private(set) var isSynced = false
+    private(set) var errorMessage: String?
 
     func startSync() {
-        store.start(id: "sync", lifetime: .screenBound) { [weak self] cancellation in
-            guard let self else { return }
-            try cancellation.check()
-            try await syncUseCase.sync()
-            try cancellation.check()
+        store.start(id: "sync", lifetime: .screenBound) { [weak self, syncUseCase] cancellation in
+            do {
+                try cancellation.check()
+                try await syncUseCase.sync()
+                try cancellation.check()
+                self?.isSynced = true
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                self?.errorMessage = String(describing: error)
+            }
         }
     }
 }
 
-// --- レシピ 7: 同じ ActionID の方針を分散させない ---
+// Action identity and policy are declared together.
 
 private enum RecipeSettingsAction {
     static let save: ActionID = "settings.save"

@@ -1,52 +1,27 @@
-# ADR-0006: Swift 6 言語モード専用・@MainActor 固定
+# ADR-0006: Swift 6 と明示的な actor 隔離を前提にする
 
-- ステータス: 実装済み(README に一部明文あり — 作者確認待ちは @MainActor の範囲)
-- 日付: 2026-07-03
+## 前提
 
-## 文脈
-
-task の所有権を明示するライブラリが、自身のデータ競合安全性を妥協していては
-説得力がない。また、対象ドメイン(同期 UI コールバック、ViewModel)は
-実質的に main actor 上の世界である。
+task を受け付け、追跡し、終了させる処理には可変状態がある。
+UI への状態反映と、非 UI の task 所有をそれぞれ適切な actor に隔離する。
 
 ## 決定
 
-- Swift 6 言語モード(strict concurrency)専用。Swift 5 モードは意図的に非対応。
-- UI 境界 product `Tasking` の `ViewTaskStore` / `ActionRunner` は `@MainActor`
-  クラスとし、operation も
-  `@MainActor @Sendable` で受ける。
-- 非 UI task 所有は別 product `TaskingCore` の actor に隔離し、UI API の
-  MainActor 契約を一般化しない (ADR-0010)。
-- 対応 OS は concurrency が back-deploy される下限(iOS 13+ / macOS 10.15+)まで広げる。
+- Swift tools 6.0 と Swift 6 言語モードを使う。消費側の feature も Swift 6 言語モードを前提とする。
+- `ViewTaskStore` / `ActionRunner` とその operation は MainActor に隔離する。
+- `TaskSlot` は独立した actor とし、operation は `@Sendable` な async closure を受け取る。
+- deployment target は iOS 13、macOS 10.15、tvOS 13、watchOS 6、visionOS 1 以上とする。
+- default actor isolation と `NonisolatedNonsendingByDefault` は有効にしない。
 
-## 補足: Swift 5 言語モードの消費側
+## 理由と制約
 
-パッケージ自体は Swift 6 language mode でビルドされるが、SwiftPM の依存として
-Swift 5 language mode の target から import できる場合がある。この場合でも、
-operation クロージャの capture は消費側 target の言語モードで検査される。
+Store / Runner の同期操作は MainActor 上で直列になり、ViewModel の状態を直接扱える。
+Slot は UI の isolation を非 UI の所有者へ持ち込まずに task の置換を管理できる。
 
-したがって Swift 5 target では、非 Sendable object の capture が警告なしに通ることがあり、
-Tasking の strict concurrency 前提は保てない。Tasking を使う feature module は Swift 6
-language mode に上げることをサポート境界とする。
+MainActor の operation に重い同期計算を書くと UI を占有する。
+`await` を書くこと自体は、処理を別の executor に移す保証にならない。
+計算を担当する actor や関数の isolation と負荷を確認する。
 
-## 根拠
-
-- README の言葉: 「task 所有権を明示するパッケージなので、strict data-race
-  checking は公開品質の一部」。
-- UI 境界のツールと割り切ることで、ロック・actor hop の設計を持ち込まずに済み、
-  実装が読み切れるサイズに収まる。ViewModel の可変状態(@MainActor)への
-  書き込みが operation 内で自然に書ける。
-
-## 代償
-
-- `ViewTaskStore` / `ActionRunner` はバックグラウンドサービス・非 UI 文脈の
-  重複制御には使えない。非 UI の単一 task 所有は `TaskSlot` に限定し、
-  ActionRunner の一般 actor 版やキューは引き続きスコープ外とする。
-- operation の同期部分は main actor 上で走るため、重い CPU 処理を直接書くと
-  UI を止める(await で他の isolation に逃がす前提)。
-- Swift 5 モードのプロジェクトは採用できず、間口は狭まる。
-
-## 未解決の問い
-
-- `TaskSlot` より広い非 UI Runner、複数ID store、キューが必要になったとき、
-  TaskingCore を拡張するか別ライブラリへ委ねるか。
+Swift 5 の消費側は、import できても capture が Swift 5 の規則で検査されるためサポート範囲外とする。
+コンパイラの isolation 設定を変える場合は、特に Slot の operation の実行場所と
+Swift tools の対応範囲を検証する。[導入と運用](../adoption.md) を参照する。

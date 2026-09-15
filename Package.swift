@@ -27,13 +27,14 @@ let package = Package(
             name: "Tasking",
             dependencies: ["TaskingCore"]
         ),
+        .target(name: "TaskingTestSupport", path: "Tests/Support"),
         .testTarget(
             name: "TaskingCoreTests",
-            dependencies: ["TaskingCore"]
+            dependencies: ["TaskingCore", "TaskingTestSupport"]
         ),
         .testTarget(
             name: "TaskingTests",
-            dependencies: ["Tasking"]
+            dependencies: ["Tasking", "TaskingTestSupport"]
         )
     ],
     swiftLanguageModes: [.v6]

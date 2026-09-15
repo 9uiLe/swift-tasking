@@ -1,6 +1,6 @@
 import TaskingCore
 
-/// Source-compatible access to the cancellation contract shared with `TaskingCore`.
+/// The cancellation contract shared by `Tasking` and `TaskingCore`.
 ///
 /// Each access reads the task that is currently executing; this value does not forward a
 /// parent's cancellation into a new unstructured `Task`. Use structured child tasks when

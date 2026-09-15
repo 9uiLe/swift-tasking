@@ -2,3 +2,4 @@
 .swiftpm/
 DerivedData/
 .tokensave/
+Benchmarks/results/

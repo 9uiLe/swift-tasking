@@ -1,14 +1,20 @@
-# レシピ集
+# 利用レシピ
 
-プロトタイプ(`Examples/TaskingPrototype`)で実証した、Tasking 利用側の定型と落とし穴。
-ライブラリ本体の責務は「所有権と方針を見える形にする」ことなので、UI state や業務状態の
-整合は ViewModel 側で明示的に持つ。
+Tasking は task の所有と重複方針を管理する。業務結果、表示状態、古い処理の結果を採用するかは
+ViewModel / service が決める。以下はその実装パターンである。
 
-## キャンセル時は loading state を戻してから rethrow する
+Swift の断片では `import Tasking`、UUID を使う箇所では `import Foundation`、Slot の例では
+`import TaskingCore` を前提とする。`settingsUseCase`、`searchUseCase` などの依存と domain の値型は
+アプリが用意する。クラスの断片では依存の宣言と initializer を省略する。
+実行可能な例は [TaskingPrototype](../Examples/TaskingPrototype/Sources/TaskingPrototype/PrototypeApp.swift) を参照する。
 
-`ViewTaskStore` は `CancellationError` を正常なキャンセル終了として扱う。したがって、
-operation 内の ViewModel が `.saving` / `.loading` のような state を立てた場合、
-キャンセル経路でも state を戻してから `CancellationError` を投げ直す。
+## キャンセル時の表示状態を定義する
+
+Store は `CancellationError` を正常な終了として扱う。ViewModel が `.saving` / `.loading` を
+設定した場合は、キャンセル経路で表示を復旧してから投げ直す。
+
+次の例は同じメソッドの実行が重ならない場合の状態遷移を示す。
+手動キャンセル後の再開始や `.cancelExisting` で重なる場合は、次節の世代ガードも使う。
 
 ```swift
 @MainActor
@@ -39,27 +45,30 @@ final class SettingsViewModel {
 }
 ```
 
-## `.cancelExisting` の後始末は世代でガードする
+ロード前の表示を残したい場合は、開始前の状態を保存してキャンセル時に戻す。
+たとえば一覧の再読込をキャンセルしたら、ロード済みの一覧を表示し続ける。
 
-検索の打ち直しのように `.cancelExisting` を使う場合、古い run の `defer` や `catch` が
-新しい run の開始後に実行されることがある。単純な `defer { isSearching = false }` は
-新しい run の loading state を折るため、世代カウンタで「自分が最新か」を確認してから
-後始末する。
+## 結果と後始末を実行の世代で制御する
+
+キャンセルは協調的であり、古い run の `catch` や `defer` が新しい run の開始後に動くことがある。
+結果・エラー・loading の更新を、その実行が最新かで判断する。
 
 ```swift
 @MainActor
 final class SearchViewModel {
-    private var generation = 0
+    private var latestSearch = UUID()
     private(set) var isSearching = false
     private(set) var results: [SearchResult] = []
+    private(set) var errorMessage: String?
 
     func search(term: String, cancellation: CancellationContext) async throws {
-        generation += 1
-        let currentGeneration = generation
+        let search = UUID()
+        latestSearch = search
         isSearching = true
+        errorMessage = nil
 
         defer {
-            if generation == currentGeneration {
+            if latestSearch == search {
                 isSearching = false
             }
         }
@@ -68,39 +77,31 @@ final class SearchViewModel {
             try cancellation.check()
             let newResults = try await searchUseCase.search(term)
             try cancellation.check()
-            if generation == currentGeneration {
+            if latestSearch == search {
                 results = newResults
             }
         } catch let error as CancellationError {
             throw error
+        } catch {
+            if latestSearch == search {
+                errorMessage = String(describing: error)
+            }
         }
     }
 }
 ```
 
-## `cancel` 後の `.ignoreNew` はゾンビ run を防がない
+キャンセル確認は処理の継続を判断し、世代ガードは結果の採用を判断する。
+両方を使っても、送信済みのリクエストや保存済みのデータを巻き戻すことはできない。
+外部への副作用には、必要に応じて domain 側の重複排除や順序規則を設ける。
 
-`ViewTaskStore` の `cancel(id:)` / `cancel(lifetime:)` は、対象 task にキャンセルを要求し、
-追跡から即時に外す。Swift のキャンセルは協調的なので、operation が `check()` しない、
-またはキャンセル対応 API で停止しない場合、その処理は store の追跡外で実行を続ける。
+## キャンセルと実終了を区別する
 
-そのため、手動キャンセル直後の `isRunning(id:) == false` は「追跡中ではない」という意味であり、
-「処理本体が完全に終了した」という意味ではない。同じ ActionID を `.ignoreNew` で再開始すると、
-古い処理が残っていても新しい run は開始され得る。
+Store の cancel は run を追跡から即座に外す。したがって `isRunning == false` は実終了を表さず、
+`.ignoreNew` はキャンセル済みで未終了の run を重複として扱わない。
 
-この意味論を前提に、次を守る。
-
-- operation は長い処理の前後と重要な suspension point の後で `try cancellation.check()` を呼ぶ。
-- UI の loading 表示は `isRunning` に直結せず、ViewModel の state として持つ。
-- キャンセル後にも残り得る副作用がある処理では、ViewModel 側で世代 ID や domain-level token を使い、
-  古い run の結果を捨てる。
-- 「実処理が完全に終わるまで新規開始を禁止したい」場合は、現行 API の `.ignoreNew` だけに頼らない。
-
-## tracking 解除後の実終了は run handle 経由で待つ
-
-`cancel` は ADR-0009 の tracking 意味論を保つため、同期的に `isRunning == false` にする。
-一方で store はキャンセル済み task の handle を実終了まで所有しているため、async な teardown
-やテストでは `ActionRun` を使って実終了を待てる。
+1回の具体的な実行が終わるまで待つ場合は、start が返した `ActionRun` を使う。
+次の断片は MainActor の async 関数内で実行する。
 
 ```swift
 let outcome = taskStore.start(
@@ -117,13 +118,15 @@ taskStore.cancel(run)
 await taskStore.awaitCompletion(of: run)
 ```
 
-複数 run を一括で待つ場合は `await taskStore.waitForIdle()` を使う。待機中に開始された run も
-対象になるため、teardown では先に利用側の新規入力を止める。
+Store が所有する全 run の終了確認には `waitForIdle()` を使う。
+受付が開いていれば、待機中に開始された run も対象にする。
+特定の処理同士を実終了まで直列化したい場合は、新規開始の入口も制御する。
+`.ignoreNew` だけで副作用の直列化を保証しない。
 
-## TaskSlot の teardown は admission を閉じてから待つ
+## 所有者の終了時は受付を閉じてから待つ
 
-actor は `await` のたびに再入可能である。`cancel()` と `waitForIdle()` を別々に呼ぶと、
-その間または待機中に `replace` が入り、未キャンセルの新規 operation まで待機対象になり得る。
+`cancelAndWaitForIdle()` は、最初の suspension より前に受付を閉じ、キャンセルを要求する。
+Store / Slot ともに、終了処理中の新しい start / replace を拒否できる。
 
 ```swift
 actor SyncCoordinator {
@@ -135,114 +138,93 @@ actor SyncCoordinator {
 }
 ```
 
-`cancelAndWaitForIdle()` は admission を閉じてから active task を cancel し、その後で初めて
-suspend する。自然完了を待ちたい場合は `close()` の後に `waitForIdle()` を呼ぶ。
+自然完了を待つ場合は `close()` の後に `waitForIdle()` を呼ぶ。
+close は終端であるため、再表示する画面の `onDisappear` では `cancel(lifetime:)` を使う。
+同じ Slot を再利用する場合も `cancel()` を使う。
 
-## operation 内で unstructured task を作らない
+待機する側のキャンセルは、所有する task をキャンセルせず、待機を中断しない。
+operation が終了しなければ待機も終わらない。
 
-`CancellationContext` は現在実行中の task のキャンセル状態を読む。operation の中でさらに
-`Task {}` を作ると、処理は別の unstructured task に逃げ、store が所有する task のキャンセルは
-内側に自動伝播しない。
+## operation 内の並行処理を構造化する
+
+operation 内で `Task {}` を作ると独立した task になり、外側のキャンセルは自動伝播しない。
+`CancellationContext` を渡しても、内側で読むのは内側の task の状態である。
+並行処理には `async let` / task group を使う。
+
+次の断片では `viewModel.recordSyncFailure(_:)` が同期の MainActor メソッドとして
+業務エラーを表示状態に変換する。
 
 ```swift
-// Avoid this inside a Tasking operation.
 viewTaskStore.start(id: "sync", lifetime: .screenBound) { cancellation in
-    Task {
-        try await syncUseCase.sync()
+    do {
+        try cancellation.check()
+        async let profile: Void = profileUseCase.sync()
+        async let settings: Void = settingsUseCase.sync()
+        _ = try await (profile, settings)
+        try cancellation.check()
+    } catch is CancellationError {
+        return
+    } catch {
+        viewModel.recordSyncFailure(error)
     }
 }
 ```
 
-operation 内で並行処理が必要な場合は、呼び出し元の task ツリーに残る `async let` や task group を使う。
+構造化子 task は親の終了前に合流する。所有中の operation またはその構造化子 task から、
+同じ Store / Slot の自分の終了を待つ操作は呼ばない。
 
-```swift
-viewTaskStore.start(id: "sync", lifetime: .screenBound) { cancellation in
-    async let profile: Void = profileUseCase.sync()
-    async let settings: Void = settingsUseCase.sync()
+## operation と所有者の参照関係を設計する
 
-    try cancellation.check()
-    _ = try await (profile, settings)
-    try cancellation.check()
-}
+Store は task handle を保持し、task は operation closure を保持する。
+operation が Store や Store を所有するオブジェクトを強参照すると、次の循環ができる。
+
+```text
+owner → store → task → operation → owner
 ```
 
-## operation から store owner を強参照しない
-
-`ViewTaskStore` は task handle を保持し、その task は operation クロージャを保持する。
-operation が store 自身、または store を所有する ViewModel / coordinator を強参照すると、
-`store -> task -> operation -> store owner -> store` の一時循環ができる。
-
-この循環中は view の `@State` や外部参照が切れても store が解放されないため、`deinit` による
-全 task キャンセルの安全網は operation 完了まで発火しない。`onDisappear` などで明示的に
-`cancel(...)` していれば影響は限定されるが、deinit 安全網だけに依存する構成では危険になる。
+外部から owner を解放しても、この循環中は `deinit` のキャンセルが働かない。
+長い処理に必要な依存だけを捕捉し、所有者への反映には弱参照を使う。
 
 ```swift
 @MainActor
 final class StoreOwningViewModel {
     let store = ViewTaskStore()
     private let syncUseCase = SyncUseCase()
+    private(set) var isSynced = false
+    private(set) var errorMessage: String?
 
     func startSync() {
-        store.start(id: "sync", lifetime: .screenBound) { [weak self] cancellation in
-            guard let self else { return }
-            try cancellation.check()
-            try await syncUseCase.sync()
-            try cancellation.check()
+        store.start(id: "sync", lifetime: .screenBound) { [weak self, syncUseCase] cancellation in
+            do {
+                try cancellation.check()
+                try await syncUseCase.sync()
+                try cancellation.check()
+                self?.isSynced = true
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                self?.errorMessage = String(describing: error)
+            }
         }
     }
 }
 ```
 
-operation が owner に触らなくてよいなら、そもそも owner を capture しない形にする。
-owner に触る必要がある場合は weak capture と明示 cancel を併用する。
+この例は `.ignoreNew` で追跡中の重複を拒否する。キャンセル後の再開始を許す利用側では、
+この参照構成に加えて世代ガードを設ける。
 
-このレシピが警告しているのは **operation クロージャ**からの強参照である。
-Environment 等に格納される同期ハンドラ closure が store を強参照するのは問題ない。
-ハンドラは `store -> task -> operation` の連鎖に入らないため、循環を作らない。
-循環になるのは operation が store owner を capture する場合のみである。
+`[weak self]` でも、await の前に `guard let self` で強参照へ変えると suspension 中は所有者を保持する。
+依存を先に捕捉し、結果反映時に `self?` で参照する形を使う。
 
-```swift
-private enum AppActions {
-    static let privacyOptions: ActionID = "app.privacyOptions"
-}
+アプリや Environment が持つ同期ハンドラが Store を保持する構成は、この循環とは別である。
+その場合も実際の所有関係を確認し、operation の捕捉を小さく保つ。
+Slot を所有する service も同じ参照規則に従う。
 
-// 問題ない: ハンドラ closure は operation ではないので循環に入らない
-let handler = PrivacyOptionsHandler { [taskStore, repository] in
-    taskStore.start(
-        id: AppActions.privacyOptions,
-        lifetime: .appBound,
-        policy: .ignoreNew
-    ) { _ in
-        await repository.presentPrivacyOptions()
-    }
-}
-```
+## non-throwing メソッドで協調する
 
-## システムダイアログを出す work を scene-phase 連動の構造化スコープに置かない
-
-App Tracking Transparency (ATT) のようなシステムダイアログは、表示自体が
-`scenePhase` を `.inactive` に変える。この種の work を `.task(id: scenePhase)` のような
-scene-phase 連動の構造化スコープに置くと、ダイアログ表示が自分自身の task をキャンセルする。
-
-これは README の「スコープが合う structured を先に検討する」方針の反例であり、事前に
-「スコープが合わない」と分かる具体例である。この場合は appBound の `ViewTaskStore` に
-明示所有させる。composition root で scenePhase を見て起動する形は、
-[lifetimes.md](lifetimes.md) の「appBound — アプリ寿命のコンテナ所有」節を参照する。
-
-## 既存の非 throwing ViewModel API に CancellationContext を後付けする
-
-エラーを UI state に変換する非 throwing の ViewModel メソッドでは、
-`try cancellation.check()` より `cancellation.isCancelled` による早期 return を推奨する。
-throwing の `check()` を使うと、`CancellationError` をビジネスエラーと区別するための
-`do` / `catch` が各メソッドに増える。`if cancellation.isCancelled { return }` なら、
-boilerplate なしで「キャンセルは正常系、state を汚さない」を表現できる。
-
-使い分けは単純である。throwing メソッドでは既存レシピどおり `try cancellation.check()` を使う。
-非 throwing メソッドでは `cancellation.isCancelled` で早期 return する。
-ただし、呼び出し先 API が `CancellationError` を throw して `catch` に落ちる経路があるため、
-`catch is CancellationError` を正常系として扱い、`.failed` に書き戻さない。
-立てた `.loading` はキャンセル経路でも戻す。これは先頭レシピ
-「キャンセル時は loading state を戻してから rethrow する」と同じ理由である。
+non-throwing の ViewModel メソッドは `isCancelled` で早期に return できる。
+呼び出し先が `CancellationError` を投げる経路も扱い、キャンセルで業務失敗を表示しない。
+次の例も、実行が重ならない場合の状態遷移を示す。
 
 ```swift
 @MainActor
@@ -255,21 +237,19 @@ final class FeedViewModel {
     }
 
     private(set) var state: LoadState = .idle
-    private let feedUseCase: FeedUseCase
 
     func load(cancellation: CancellationContext) async {
         if cancellation.isCancelled { return }
-
         state = .loading
         do {
             let items = try await feedUseCase.fetch()
             if cancellation.isCancelled {
-                state = .idle // 立てた loading は戻す
+                state = .idle
                 return
             }
             state = .loaded(items)
         } catch is CancellationError {
-            state = .idle // キャンセルは正常系。.failed には書き戻さない
+            state = .idle
         } catch {
             state = .failed(error)
         }
@@ -277,44 +257,20 @@ final class FeedViewModel {
 }
 ```
 
-`cancellation: CancellationContext? = nil` は便利に見えるが、nil 経路では
-`cancellation?.check()` や `cancellation?.isCancelled` が一切検査しなくなる。
-特に SwiftUI `.task` から context なしで呼ぶ経路では、`.task` 自身の ambient cancellation が
-存在するのに検査されない。
-
-ViewTaskStore 起点と SwiftUI `.task` 起点が同じメソッドを共有する場合も、context は optional にせず
-non-optional のまま受ける。`.task` 起点からは `CancellationContext()` を明示的に渡す。
-`CancellationContext` は現在の task の ambient 状態を読むだけの値なので、`.task` の task 内で作れば
-`.task` のキャンセルが正しく反映される。これにより explicit passing の思想を保ったまま、
-nil 経路の検査漏れを構造的に排除できる。
+Store と SwiftUI `.task` から同じメソッドを呼ぶ場合も、context は non-optional で受け取る。
+`.task` の中では `CancellationContext()` を渡す。値の構築時点ではなく、アクセス時点の
+実行中 task を読むため、その `.task` の中で呼び出すメソッドは同じキャンセル状態を確認できる。
 
 ```swift
-private enum FeedActions {
-    static let load: ActionID = "feed.load"
-}
-
-// ViewTaskStore 起点
-viewTaskStore.start(
-    id: FeedActions.load,
-    lifetime: .screenBound,
-    policy: .ignoreNew
-) { cancellation in
-    await viewModel.load(cancellation: cancellation)
-}
-
-// SwiftUI .task 起点 — optional + nil ではなく、明示的に渡す
 .task {
     await viewModel.load(cancellation: CancellationContext())
 }
 ```
 
-## 同じ ActionID の方針を分散させない
+## ActionID と方針をまとめる
 
-`ActionRunner` は `ActionDescriptor` に重複ポリシーを束ねるが、`ViewTaskStore.start` は
-呼び出しごとに `TaskStartPolicy` を渡す。同じ `ActionID` に対して、ある呼び出し箇所では
-`.ignoreNew`、別の箇所では `.allowConcurrent` のような矛盾した方針を書けてしまう。
-
-同じ ActionID の方針は feature 内で 1 か所に寄せる。
+同じ ActionID の重複方針は feature 内の1か所で宣言する。
+共有 Store では `feature.action` の名前空間を使い、別 feature の処理との衝突を防ぐ。
 
 ```swift
 private enum SettingsAction {
@@ -331,4 +287,5 @@ viewTaskStore.start(
 }
 ```
 
-より強く寄せたい場合は、feature 専用の小さな wrapper を作り、ActionID と policy を同時に隠蔽する。
+呼び出し箇所が多い場合は feature 専用の同期ハンドラにまとめ、ID と方針をそこで選択する。
+Runner では `ActionDescriptor` が ID と方針をまとめる。

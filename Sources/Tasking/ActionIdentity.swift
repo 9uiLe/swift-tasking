@@ -48,7 +48,7 @@ public struct ActionRun: Hashable, Sendable {
     }
 }
 
-/// The reason a requested Action did not start.
+/// Why `ActionRunner` declined to run an Action.
 public enum ActionSkipReason: Equatable, Sendable {
     case alreadyRunning
 }

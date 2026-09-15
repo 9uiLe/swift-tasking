@@ -1,106 +1,104 @@
-# 用語集(Glossary)
+# 用語集
 
-Tasking のドメイン語彙。コード・ドキュメント・レビューコメントでは、ここで定義した
-意味でのみ各語を使う(ユビキタス言語)。
+コード・設計資料・レビューで共有する語彙を定義する。
+利用場面から型を選ぶ場合は [用途と設計原則](positioning.md) を参照する。
 
-## 中核概念
+## 処理と識別子
 
-### Action(アクション)
-ユーザー操作またはライフサイクルを起点とする、アプリにとって意味のある 1 つの処理。
-「保存」「更新」「同期」など。**Task は実装機構であり、Action は業務語彙である**。
-このライブラリの API はすべて Task ではなく Action を主語に設計されている。
-
-### ActionID
-Action の安定した識別子(`"settings.save"` など)。重複実行の判定単位。
-呼び出し箇所に文字列リテラルを書かず、機能ごとの名前空間に定数として宣言する。
-
-### ActionRun / ActionRunID
-Action の「1 回の具体的な実行」。同じ ActionID の実行が複数並行し得るため
-(`allowConcurrent`)、実行ごとに UUID ベースの ActionRunID で区別する。
-ActionID が「何をするか」、ActionRunID が「どの実行か」。
-
-### 追跡中(Tracked) / 実行中(Executing)
-Tasking の `isRunning` / `runningCount` が答えるのは「追跡中かどうか」であり、
-処理本体が実行中かどうかを OS レベルで保証するものではない。`cancel(id:)` や
-`cancel(lifetime:)` はキャンセルを要求したうえで追跡を即時解除するため、
-協調しない処理は `isRunning == false` の後も実行を続け得る。
-
-この区別は `.ignoreNew` の理解に重要である(ADR-0009)。手動キャンセル後は追跡が消えるため、
-古い処理がまだ実行中でも同じ ActionID の新しい `start(..., policy: .ignoreNew)` は
-開始され得る。表示状態と結果の世代管理は ViewModel が扱い、task handle の実終了は
-`awaitCompletion(of:)` / `waitForIdle()` で待てる。
-
-### 所有(Ownership)
-unstructured task のハンドル(`Task` 値)への参照を保持し、キャンセル・生存確認・
-破棄時の後始末に責任を持つこと。構造化並行性では task tree が自動で行うが、
-`Task {}` では誰かが明示的に引き受けなければ**所有者不在(fire-and-forget)**になる。
-ViewTaskStore はこの所有を引き受ける型。ActionRunner は意図的に所有しない。
-非 UI 文脈では TaskingCore の TaskSlot が単一taskの所有を引き受ける。
-
-### ActionLifetime(ライフタイム)
-ViewTaskStore が所有する task の「論理的な」生存スコープの宣言。
-`.screenBound` / `.sceneBound` / `.appBound` と文字列リテラル拡張。
-**宣言であって強制ではない**(ADR-0004)。実際の生存上限は store 自体の寿命で決まる。
-`cancel(lifetime:)` の一括キャンセル単位として機能する。
-
-### 重複ポリシー(Duplicate Policy)
-同じ ActionID の実行が既に進行中のときに新しい要求をどう扱うかの、呼び出し箇所で
-宣言する方針。
-
-| 型 | 値 | 意味 |
-|---|---|---|
-| `TaskStartPolicy`(ViewTaskStore) | `.ignoreNew` | 既存を維持し新規をスキップ(保存ボタンの二度押し対策の既定) |
-| | `.cancelExisting` | 既存にキャンセルを要求してから新規を開始(検索の打ち直し) |
-| | `.allowConcurrent` | 同一 ActionID の並行実行を許可・追跡 |
-| `ActionDuplicatePolicy`(ActionRunner) | `.ignoreNew` | 既存を維持し新規をスキップ |
-| | `.allowConcurrent` | 並行実行を許可 |
-
-ActionRunner に `cancelExisting` 相当が**存在しない**のは設計による:
-task を所有しない型はキャンセルできない(ADR-0001)。
-
-### 協調的キャンセル(Cooperative Cancellation)
-Swift のキャンセルは要求であって強制ではない。`cancel()` はフラグを立てるだけで、
-実行中の処理が `check()` するか、キャンセル対応 API を呼ばない限り止まらない。
-Tasking の全 API ドキュメントはこの前提の上に書かれている。
-
-### CancellationContext
-キャンセル協調の責任を ViewModel メソッドの**シグネチャに現す**ための値
-(ADR-0002)。機能的には `Task.isCancelled` / `Task.checkCancellation()` の
-薄いラッパーであり、能力(capability)を付与するものではない。
-
-### ActionOutcome / ActionFailure / ActionSkipReason
-ActionRunner が返す型付きの最終結果。`succeeded / cancelled / skipped / failed`。
-ActionFailure はエラーの型名とメッセージの文字列表現で、**元のエラー型を意図的に
-消去している**(ADR-0005)。ログ・計測向けであり、エラー種別による分岐・回復は
-operation 内(ViewModel 側)で行う。
-
-## 3 つの中核型
-
-### TaskSlot
-非 UI actorから起動する置換可能なunstructured taskを所有するTaskingCoreのactor。
-replace/cancel済みtaskも実終了までは所有し、`waitForIdle`で全終了を待てる。
-`close` で新規 replace を恒久停止し、`cancelAndWaitForIdle` で race のない teardown を行う。
-ActionID、UI lifetime、業務エラー、キューは扱わない。
-
-### ViewTaskStore
-同期 UI コールバック(`Button` action など、`await` できない場所)から作られる
-unstructured task のハンドルを所有する `@MainActor` クラス。
-ライフタイム・重複ポリシーを呼び出し箇所で宣言させ、`deinit` で全 task を
-キャンセルする。cancel 後も handle は実終了まで所有するが、tracking query からは即時に
-外す。結果は返さない(業務エラーは ViewModel state に変換する契約。ADR-0003)。
-
-### ActionRunner
-すでに async 文脈にいるときに、重複制御と型付き結果だけを提供する `@MainActor`
-クラス。**task を作らず・所有せず・キャンセルしない**。キャンセルの所有権は
-呼び出し側の構造化文脈(SwiftUI `.task`、task group、ViewTaskStore)に残す。
-
-## 使い分けの早見表
-
-| 状況 | 使うもの |
+| 用語 | 定義 |
 |---|---|
-| view の表示に紐づくロード | SwiftUI `.task` / `.task(id:)`(純正を優先) |
-| スコープ内で並行処理 | `async let` / task group(構造化を優先) |
-| 同期コールバックから起動し、寿命・重複方針を明示したい | `ViewTaskStore.start` |
-| async 文脈内で重複制御と型付き結果が欲しい | `ActionRunner.run` |
-| 非 UI ownerが同期scope外まで単一taskを所有・置換したい | `TaskingCore.TaskSlot` |
-| 実行順序の保証(FIFO) | **スコープ外** — mattmassicotte/Queue 等を検討 |
+| task | Swift Concurrency の実行単位。`Task {}` が作る task は unstructured task である |
+| operation | Store / Runner / Slot に渡す、実際の処理を記述した async closure |
+| Action | 保存・更新・同期など、アプリにとって意味のある処理の種類 |
+| `ActionID` | Action の安定した識別子。例: `"settings.save"`。同じ Store / Runner 内の重複判定単位 |
+| `ActionRunID` | 1回の実行を識別する UUID ベースの値 |
+| `ActionRun` | ActionID と ActionRunID の組で表す、1回の具体的な実行 |
+| `ActionDescriptor` | Runner に渡す ActionID と重複方針の組 |
+
+同じ ActionID の複数の run は並行し得る。具体的な run の照会・キャンセル・終了待ちには
+ActionID と ActionRunID の両方が一致する `ActionRun` を使う。
+
+## 追跡・所有・終了
+
+### 追跡（tracking）
+
+Action を重複判定と照会の対象として登録すること。
+`isRunning` / `runningCount` は、その呼び出し時点の追跡状態を返す。
+Store は cancel 時に追跡を即座に解除する。Runner は run の最終結果が決まるまで追跡する。
+追跡状態は SwiftUI の再描画を駆動する観測可能な状態ではない。
+
+### 所有（ownership）
+
+unstructured task のハンドルを保持し、キャンセル要求と終了確認の責任を持つこと。
+Store / Slot は作成した task を終了まで所有する。キャンセルや置換だけでは所有を解除しない。
+Runner は呼び出し元の task を使い、その task を所有しない。
+
+### 実終了（termination）
+
+operation と、その task 内の後始末が終わること。
+キャンセル要求は実終了を保証せず、追跡から外れた operation も実行を続け得る。
+Store の `awaitCompletion(of:)` は1 run、Store / Slot の `waitForIdle()` は所有中の全 task を待つ。
+
+### active task
+
+Slot が次の `replace` / `cancel` の対象にする最大1つの task。
+active でなくなった task も、終了するまでは所有中である。
+
+### 受付（admission）と close
+
+受付は、新しい start / replace を受理すること。`close()` は受付を恒久的に停止する。
+close は冪等であり、所有中の task はキャンセルしない。
+`cancelAndWaitForIdle()` は受付停止とキャンセルを最初の suspension より前に行う。
+
+## 寿命とキャンセル
+
+### `ActionLifetime`
+
+Store における論理的な寿命のラベル。`.screenBound` / `.sceneBound` / `.appBound` と
+任意の文字列を使える。照会と一括キャンセルの選択に使い、Store の寿命や OS の実行権限を変えない。
+ライフサイクルへの接続と Store の配置は利用側が行う。
+
+### 協調的キャンセル
+
+キャンセル要求を受けた operation 自身が終了に協力する方式。
+Swift の `cancel()` はキャンセル状態を設定し、キャンセルハンドラを呼ぶ。
+operation の強制停止や副作用の巻き戻しは行わない。
+
+### `CancellationContext`
+
+キャンセルに協調する契約を引数として表す値。
+`isCancelled` / `check()` は、アクセスした時点で実行中の task のキャンセル状態を読む。
+元の task の状態を保存するトークンではなく、別の unstructured task へキャンセルを伝播しない。
+
+### 所有文脈（ownership context）
+
+内部の TaskLocal に保持する `TaskOwnership` marker の集合。
+構造化子 task へも継承され、自分の終了を待つ誤用の検出に使う。
+キャンセル状態とは別の情報であり、任意の task 間の依存関係を表すものではない。
+
+## 重複方針
+
+| 型 | 値 | 同じ ActionID の追跡中 run があるときの動作 |
+|---|---|---|
+| `TaskStartPolicy` | `.ignoreNew` | 新規要求を拒否する（既定） |
+| | `.cancelExisting` | 追跡中 run をキャンセルし、新規要求を開始する |
+| | `.allowConcurrent` | 新規要求も受け付ける |
+| `ActionDuplicatePolicy` | `.ignoreNew` | 新規要求を拒否する（既定） |
+| | `.allowConcurrent` | 新規要求も受け付ける |
+
+Runner は task を所有しないため、キャンセルによる置換方針を持たない。
+Store の `.ignoreNew` は、手動キャンセルで追跡から外れた run を重複として扱わない。
+
+## 返り値
+
+| 型 | 内容 |
+|---|---|
+| `TaskStartOutcome` | Store の受付結果。`.started(ActionRun)` または `.skipped(TaskStartSkipReason)` |
+| `TaskStartSkipReason` | `.alreadyRunning` / `.closed` |
+| `ActionOutcome<Success>` | Runner の最終結果。`.succeeded(Success)` / `.cancelled` / `.skipped(ActionSkipReason)` / `.failed(ActionFailure)` |
+| `ActionSkipReason` | `.alreadyRunning` |
+| `ActionFailure` | エラーの型名とメッセージを文字列で保持する比較可能な値 |
+
+Runner の `.cancelled` は operation が `CancellationError` を投げたことを表す。
+キャンセル要求の有無だけでは outcome は決まらず、operation が値を返せば `.succeeded` になる。
+`ActionFailure` の文字列はログ・計測向けであり、業務分岐用の安定したエラーコードではない。

@@ -1,43 +1,30 @@
-# ADR-0003: ViewTaskStore は業務エラーを運ばない
+# ADR-0003: Store の業務結果とエラー表示を ViewModel に置く
 
-- ステータス: 確定。release-safe な観測フックを実装済み
-- 日付: 2026-07-03
+## 前提
 
-## 文脈
-
-同期 UI コールバックから起動した処理の結果・エラーは、呼び出し側で await
-できない。エラーの通知経路が「store 経由のコールバック」「ViewModel state」の
-二重になると、どちらを見ればよいか曖昧になる。
+同期 UI コールバックから始める処理では、結果や失敗を UI の状態へ反映する必要がある。
+状態の反映と、task 所有の終了処理を別々の責務として定義する。
 
 ## 決定
 
-`ViewTaskStore.start` の operation は `Void` を返し、エラーの扱いを次で固定する:
+Store の operation は `async throws -> Void` とする。
 
-- `CancellationError` → 正常なキャンセル終了として黙って終わる。
-- それ以外の throw → **契約違反(プログラミングミス)**として
-  扱う。業務エラーは operation を出る前に ViewModel state へ変換されて
-  いなければならない。
-- `ViewTaskStore(onUnhandledError:)` が設定されていれば、契約違反を
-  `(ActionRun, ActionFailure)` として通知する。通知はログ・telemetry・crash report
-  用であり、業務エラーの回復経路ではない。
-- handler 未設定時は従来どおり debug assertion を発火する。
+| operation の終了 | Store の扱い |
+|---|---|
+| 正常 return | run の追跡と所有を解除する |
+| `CancellationError` | 正常なキャンセル終了として解除する |
+| その他の error | 契約違反を報告して解除する |
 
-## 根拠
+業務エラーの回復・表示は operation 内で行う。漏れたエラーは、生存中の Store に設定された
+`onUnhandledError` observer へ `(ActionRun, ActionFailure)` として通知する。
+observer がなければ Debug で assertion を発生させ、Release では通知しない。
+Store 解放後に漏れたエラーも、observer がない場合と同じ扱いにする。
 
-- エラー提示(アラート、リトライ導線、インライン表示)は本質的に UI 状態であり、
-  ViewModel の責務。store がエラーを運ぶ API を持つと、状態の置き場が二重化する。
-- 「業務エラーは state に変換してから境界を出る」という規律を、API 形状
-  (Void 戻り + assertion)で教育する。
+## 理由と制約
 
-## 代償
+保存失敗のアラートや retry の可否は業務状態である。ViewModel に判断を集めることで、
+利用者は表示と回復の経路を1か所で把握できる。observer はログ・計測・crash report の通知点とする。
 
-- handler は opt-in のため、未設定の release ビルドでは契約違反を通知できない。
-  production の composition root で logging / crash reporting handler を設定する必要がある。
-- 「とりあえず throw を投げっぱなしにして store 側で拾う」という段階的導入が
-  できず、採用ハードルが上がる。
-
-## 観測タイミング
-
-handler は operation の catch 節で、tracking 解除より前に同期実行する。そのため handler は
-受け取った `ActionRun` を `isRunning(_:)` で照合できる。handler が設定されている場合は
-観測経路をテスト可能にするため assertion を代替し、未設定時だけ従来の assertion を使う。
+observer は完了による追跡解除の前に MainActor で同期実行する。
+キャンセルにより追跡解除済みの run は、通知時にも追跡外である。
+Store は observer を保持するため、observer が Store の所有者に戻る場合は弱参照を使う。

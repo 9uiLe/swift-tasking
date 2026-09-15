@@ -1,37 +1,25 @@
-# ADR-0005: ActionFailure はエラー型を消去する
+# ADR-0005: 失敗の最終報告を文字列で表現する
 
-- ステータス: 実装済み(根拠はコードと README から復元 — 作者確認待ち)
-- 日付: 2026-07-03
+## 前提
 
-## 文脈
-
-`ActionRunner.run` は型付きの最終結果 `ActionOutcome<Success>` を返す。
-失敗ケースに元の `any Error` をそのまま載せると、`ActionOutcome` を
-`Equatable` にできず(テストでの比較が困難)、`Sendable` 保証も
-`any Error & Sendable` の制約に引きずられる。
+Runner は成功・キャンセル・拒否・失敗を `ActionOutcome<Success>` として返す。
+失敗の最終報告には比較可能な値が必要で、業務固有の回復判断は元のエラー型が使える場所で行う。
 
 ## 決定
 
-失敗は `ActionFailure`(`typeName: String` + `message: String`)に変換して載せる。
-元のエラー型は意図的に消去する。
+`ActionFailure` は `typeName: String` と `message: String` を持つ `Equatable & Sendable` な値とする。
+エラーからの構築では、型名を `String(reflecting: type(of: error))`、メッセージを
+`String(describing: error)` で得る。
 
-## 根拠
+`ActionOutcome` は成功値に `Sendable` を要求し、成功値が `Equatable` の場合に比較可能とする。
+Store の未処理エラー observer も `ActionFailure` を受け取る。
 
-- `ActionOutcome` 全体が `Equatable & Sendable` になり、テストで
-  `#expect(outcome == .failed(...))` と書ける。
-- エラー種別による**回復・分岐は operation 内(ViewModel 側)で完結すべき**という
-  ADR-0003 と同じ規律の適用。outcome の `.failed` はログ・計測・デバッグ用の
-  最終報告であり、制御フローの入力ではない。
+## 理由と制約
 
-## 代償
+失敗を値としてログやテストで扱える。元のエラーを保持しないため、受け取り側で
+downcast して業務エラーの種類ごとに回復することはできない。
+その判断は operation 内で行うか、呼び出し側と合意した domain の結果型で表す。
 
-- outcome の受け取り側でエラー型による分岐ができない。「リトライ可能な
-  ネットワークエラーだけ自動再試行」のような処理を outcome 起点では書けない
-  (operation 内に書く必要がある)。
-- `String(reflecting:)` / `String(describing:)` の出力はエラー型の内部表現に
-  依存し、安定した機械可読性はない。
-
-## 未解決の問い
-
-- 「outcome は制御フローの入力ではない」という規律を docs で明文化するか
-  (現状 README は switch 文の例を載せており、分岐に使えそうに見える)。
+outcome の成功・キャンセル・拒否・失敗による分岐は利用できる。
+`typeName` や `message` の解析による業務分岐は行わない。文字列表現は安定した
+エラーコードや永続化形式を保証しない。

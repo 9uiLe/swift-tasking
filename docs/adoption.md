@@ -1,109 +1,93 @@
-# 大規模導入ガイド
+# 導入と運用
 
-大規模・複数チームのアプリへ Tasking を導入するときの運用ルール。
-Tasking は小さなライブラリだが、ActionID と store の所有位置はアプリ全体の
-運用規律に触れるため、チーム横断の合意を先に置く。
+Tasking を複数の feature やチームで使う場合は、所有者の配置、ActionID、キャンセル後の
+状態更新を共通ルールにする。基本的な用途は [用途と設計原則](positioning.md) を参照する。
 
-## リリースと CI
+## Swift 6 と actor 隔離
 
-- public release は SemVer tag を必ず切る。README の
-  `.package(url: ..., from: "0.1.0")` は `0.1.0` tag が存在して初めて動く。
-- CI は root package と `Examples/TaskingPrototype` の debug / release / Thread Sanitizer
-  テストを通す。README の「strict data-race checking は public quality bar」という宣言は、
-  CI が守る。
-- Swift Package Index 掲載は GitHub 上の repository rename と `0.1.0` tag 作成後に確認する。
+パッケージは Swift tools 6.0、Swift 6 言語モードを使用する。
+Tasking を呼び出す feature module も Swift 6 言語モードをサポート条件とする。
 
-## Swift 5 言語モードの消費側はサポート境界外
+Swift 5 言語モードの target から import できる場合でも、closure の capture は呼び出し側の
+言語モードで検査される。import の成功だけでは strict concurrency の保証にならない。
 
-Tasking 自体は Swift 6 language mode でビルドする。ただし、SwiftPM の依存として
-Swift 5 language mode の feature module から import できる場合がある。
+UI の同期 callback と ViewModel には `Tasking` を使い、Store / Runner の MainActor 隔離に従う。
+非 UI の service actor が置換可能な task を所有する場合は `TaskingCore` に依存する。
+Slot は task 所有を担当し、debounce の時間、retry、flush、業務状態は service が持つ。
 
-その場合でも、operation クロージャ内の capture は**消費側 target の言語モード**で検査される。
-Swift 5 target では非 Sendable object を捕捉しても警告なしに通ることがあり、Tasking が
-期待する strict concurrency の規律は静かに弱まる。
+## 所有者を配置する
 
-導入ルール:
+- Store は feature、画面、またはアプリ全体の共通処理を単位として配置する。
+- 共有 Store は、同じ寿命とキャンセル方針を持つ Action に限定する。
+- UI に進捗を表示する ViewModel は、その処理を観測できる期間だけ所有する。
+- operation が Store / Slot の所有者を強参照しないかを確認する。
 
-- Tasking を使う feature module は Swift 6 language mode に上げる。
-- 移行中で Swift 5 module から使う場合は、strict concurrency の compile-time 保証はないものとして扱う。
-- Swift 5 module では、ViewModel / service capture の Sendable 性をレビューで明示確認する。
+[ライフタイムと所有構成](lifetimes.md) に画面・シーン・アプリの例を示す。
+`.appBound` は OS の background execution 権限を与えない。background での完遂には
+`beginBackgroundTask`、`BGTaskScheduler`、background `URLSession` など、用途に合う OS API を使う。
 
-## ActionID ガバナンス
+## ActionID と重複方針
 
-ActionID は文字列なので、複数チームで共有 store を使うと衝突をコンパイラが防げない。
-たとえば 2 チームが同じ app-bound store に `"sync"` を登録すると、片方の `.ignoreNew` が
-もう片方の処理を黙って skip し得る。
+ActionID の衝突は同じ Store / Runner 内で重複判定に影響する。
+たとえば共有 Store に別々の feature が `"sync"` を登録すると、一方の `.ignoreNew` が
+他方を拒否する可能性がある。
 
-導入ルール:
-
-- 原則として store は feature / screen / app-level concern ごとに分ける。
-- app-bound 共有 store は、アプリ横断で本当に同じ寿命とキャンセル方針を持つ Action だけに使う。
-- 共有 store の ActionID は `feature.action` 形式を必須にする。
-- entity ごとの ActionID は `feature.action.<entity-id>` の形にする。
-- ActionID と duplicate policy は feature 内の 1 か所へ寄せる。
-
-例:
+- 定数は `feature.action`、entity ごとは `feature.action.<entity-id>` を使う。
+- 同じ ActionID の方針は feature 内の1か所に置く。
+- 同じ ID の異なる operation を混在させる場合は、重複扱いが意図どおりかを確認する。
 
 ```swift
-enum BillingAction {
+enum BillingActions {
     static let refreshPlans: ActionID = "billing.refreshPlans"
     static let refreshPlansPolicy: TaskStartPolicy = .ignoreNew
 
-    static func downloadInvoice(_ id: Invoice.ID) -> ActionID {
-        ActionID("billing.downloadInvoice.\(id)")
+    static func downloadInvoice(_ invoiceID: String) -> ActionID {
+        ActionID("billing.downloadInvoice.\(invoiceID)")
     }
 }
 ```
 
-## `.appBound` は background execution を保証しない
+## 終了処理
 
-`.appBound` は「store をアプリ寿命のコンテナが所有する」という Tasking 内の寿命宣言であり、
-iOS / watchOS / tvOS の background execution 権限を得るものではない。
+画面の再表示などで同じ Store を再利用するときは `cancel(lifetime:)` を使う。
+所有者を終了するときは `cancelAndWaitForIdle()`、受け付け済みの処理を自然完了させるときは
+`close()` の後に `waitForIdle()` を呼ぶ。Slot も同じ受付停止の契約を持つ。
 
-アプリが background suspend されれば、`.appBound` の task も進行できない。画面を閉じても
-継続したいだけなら `.appBound` でよいが、background でも完遂が必要な処理はアプリ側で
-適切な OS API を使う。
+Store の開始結果は `TaskStartOutcome` で確認する。
 
-- 短時間の猶予: `beginBackgroundTask`
-- スケジュール実行: `BGTaskScheduler` / `BGProcessingTask`
-- 転送継続: background `URLSession`
+| 結果 | 意味 |
+|---|---|
+| `.started(run)` | task を受け付けた。業務結果は operation / ViewModel が扱う |
+| `.skipped(.alreadyRunning)` | 同じ ActionID の追跡中 run があり、`.ignoreNew` が拒否した |
+| `.skipped(.closed)` | Store の受付が閉じている |
 
-Tasking はそれらの代替ではない。使う場合も、Tasking は「どの Action か」「どの lifetime か」
-「どの duplicate policy か」を見えるようにする役割に留める。
+Runner の拒否理由は `ActionSkipReason.alreadyRunning` である。
+Runner は task の所有者ではなく、受付を閉じる状態を持たない。
 
-## 非 UI target は TaskingCore だけへ依存する
+キャンセル要求と実終了は分かれているため、`.ignoreNew` は手動キャンセル後の重なりを防がない。
+表示の loading・結果・エラーには必要に応じて世代ガードを設ける。[利用レシピ](recipes.md) を参照する。
 
-Application/service actorがunstructured taskを所有する必要がある場合は、UI向けの
-`Tasking`ではなく`TaskingCore` productへ依存し、`TaskSlot`を使う。TaskSlotは
-debounce、retry、業務エラー、永続化flushを提供しない。それらはfeature側に残す。
+## 観測と検証
 
-同じslotのoperation内から`waitForIdle`を呼ばない。terminal shutdown では
-`cancelAndWaitForIdle()` を使い、新規 admission を閉じてから協調終了を待つ。既存 work を
-cancel せず自然完了させる場合は `close()` の後に `waitForIdle()` を呼ぶ。close しない
-`waitForIdle()` は待機中の replacement も対象にするため、非終端の観測用途に限る。
+Store の `onUnhandledError` observer は、operation から漏れた `CancellationError` 以外の
+エラーを報告する。composition root でログや crash reporting に接続する。
+業務エラーの回復と表示は operation 内で完結させる。
+observer がない場合は Debug で assertion が発生し、Release では通知しない。
 
-## テストと観測性
+テストでは ViewModel の状態や domain event により業務結果を確認する。
+`awaitCompletion(of:)` / `waitForIdle()` は、キャンセル済みの task も含む実終了の確認に使う。
+CI は root package と prototype の Debug・Release・Thread Sanitizer、strict concurrency、
+iOS Simulator 向けビルドを検査する。
 
-`ViewTaskStore.awaitCompletion(of:)` は 1 run、`waitForIdle()` は store が所有する全 run の
-実終了を待つ。どちらも `isRunning` の tracking 意味論とは独立しており、cancel 済みで
-追跡から外れた task も対象にする。業務上の完了は引き続き ViewModel state や domain event
-で検証し、これらの API は task ownership の teardown 検証に使う。
+大量の開始や照会は [性能特性](performance.md) の測定方法で確認する。
+処理件数、ActionID の分布、キャンセル後に残る operation の数を実アプリに合わせる。
 
-`ViewTaskStore(onUnhandledError:)` は operation から漏れた非 cancellation error を release
-でも観測する。業務エラーの伝達路にはせず、analytics / logging / crash report の通知点として
-使う。start / finish / cancel / skip の汎用 telemetry hook はまだ提供しない。
+## ツールチェーンと配布
 
-## Swift 6.2 以降の isolation 移行メモ
+公開依存には必要な API を含む SemVer tag を指定する。開発中の checkout を使う方法は
+[README](../README.md#installation) を参照する。
 
-この package は tools 6.0、Swift 6 language mode で、default isolation と
-`NonisolatedNonsendingByDefault` を有効にしていない。将来その upcoming feature を採用すると、
-`TaskSlot` の nonisolated async operation が呼び出し元 isolation を継承する意味論へ変わる。
-採用時には operation を slot actor の executor に直列化しないため、operation 型への
-`@concurrent` 付与を同じ変更で評価する。現行 toolchain ではコードへ先行追加しない。
-
-## 今後のロードマップ候補
-
-- 観測専用 event hook: start / finish / cancel / skip を analytics や signpost に流す。
-- `ActionOutcome` の便宜プロパティ: `isSucceeded` / `isCancelled` / `failure` など。
-- 追跡中 run の debug listing / `CustomDebugStringConvertible`。
-- task naming(SE-0469)や task-local への `ActionRun` 注入による Instruments / crash log の照合。
+パッケージは default actor isolation と `NonisolatedNonsendingByDefault` を有効にしていない。
+コンパイラ設定を変える際には、Slot の nonisolated async operation がどの executor で動くかを
+検証する。呼び出し元の隔離を継承する設定は、Slot への意図しない直列化につながり得る。
+`@concurrent` などの指定は Swift tools の対応範囲と合わせて評価する。

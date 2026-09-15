@@ -1,97 +1,38 @@
-/// The duplicate policy for Actions run through `ActionRunner`.
-public enum ActionDuplicatePolicy: Equatable, Sendable {
-    /// Keep the existing run and skip a new run with the same `ActionID`.
-    case ignoreNew
-
-    /// Allow multiple runs with the same `ActionID` to overlap.
-    case allowConcurrent
-
-    /// The former spelling of `ignoreNew`.
-    @available(*, deprecated, renamed: "ignoreNew")
-    public static var rejectWhileRunning: ActionDuplicatePolicy {
-        .ignoreNew
-    }
-}
-
-/// A `Sendable` and comparable value that represents an error produced by an Action.
-public struct ActionFailure: Equatable, Sendable {
-    public let typeName: String
-    public let message: String
-
-    public init(typeName: String, message: String) {
-        self.typeName = typeName
-        self.message = message
-    }
-
-    public init(error: any Error) {
-        typeName = String(reflecting: type(of: error))
-        message = String(describing: error)
-    }
-}
-
-/// The terminal outcome of an Action run through `ActionRunner`.
-public enum ActionOutcome<Success: Sendable>: Sendable {
-    case succeeded(Success)
-
-    /// The operation threw `CancellationError`.
-    ///
-    /// This reflects the thrown error type. It does not require that the current
-    /// task was externally cancelled before the operation threw.
-    case cancelled
-
-    case skipped(ActionSkipReason)
-    case failed(ActionFailure)
-}
-
-extension ActionOutcome: Equatable where Success: Equatable {}
-
-/// Static configuration for one Action.
-public struct ActionDescriptor: Equatable, Sendable {
-    public let id: ActionID
-    public let duplicatePolicy: ActionDuplicatePolicy
-
-    public init(
-        id: ActionID,
-        duplicatePolicy: ActionDuplicatePolicy = .ignoreNew
-    ) {
-        self.id = id
-        self.duplicatePolicy = duplicatePolicy
-    }
-}
-
-/// Runs Actions in an existing async context and centrally manages Action state.
+/// Tracks Actions while running in the caller’s existing async context.
 ///
 /// `ActionRunner` does not create or own tasks. Use it when you are already in an
 /// async context and need duplicate control plus a typed terminal outcome.
 /// Use `ViewTaskStore` for the separate responsibility of owning unstructured task handles.
 @MainActor
 public final class ActionRunner {
-    private var runningRunsByActionID: [ActionID: Set<ActionRunID>] = [:]
+    private var runs = ActionRuns<Void>()
 
     public init() {}
 
+    /// Admits a run, calls `onStart` while it is tracked, and awaits the operation.
+    /// Skipped runs call neither closure. Every terminal outcome removes tracking.
+    /// Cancellation is cooperative: only a thrown `CancellationError` maps to `.cancelled`;
+    /// a returned value still maps to `.succeeded` even if cancellation was requested.
     public func run<Success: Sendable>(
         _ descriptor: ActionDescriptor,
         onStart: @MainActor (ActionRun) -> Void = { _ in },
         operation: @MainActor @Sendable (CancellationContext) async throws -> Success
     ) async -> ActionOutcome<Success> {
-        switch start(descriptor) {
-        case let .started(run):
-            onStart(run)
-            defer {
-                finish(run)
-            }
+        if descriptor.duplicatePolicy == .ignoreNew, isRunning(id: descriptor.id) {
+            return .skipped(.alreadyRunning)
+        }
 
-            do {
-                return .succeeded(try await operation(CancellationContext()))
-            } catch is CancellationError {
-                return .cancelled
-            } catch {
-                return .failed(ActionFailure(error: error))
-            }
+        let run = ActionRun(actionID: descriptor.id)
+        runs.insert(run, metadata: ())
+        defer { runs.remove(run) }
+        onStart(run)
 
-        case let .skipped(reason):
-            return .skipped(reason)
+        do {
+            return .succeeded(try await operation(CancellationContext()))
+        } catch is CancellationError {
+            return .cancelled
+        } catch {
+            return .failed(ActionFailure(error: error))
         }
     }
 
@@ -101,7 +42,7 @@ public final class ActionRunner {
     /// `ActionRunner` is not Observable. UI state such as loading indicators
     /// should be owned by the ViewModel as its own state.
     public func isRunning(id: ActionID) -> Bool {
-        runningRunsByActionID[id]?.isEmpty == false
+        runningCount(for: id) > 0
     }
 
     /// Returns the number of currently tracked runs with the given Action ID.
@@ -110,32 +51,6 @@ public final class ActionRunner {
     /// `ActionRunner` is not Observable. UI state such as loading indicators
     /// should be owned by the ViewModel as its own state.
     public func runningCount(for id: ActionID) -> Int {
-        runningRunsByActionID[id]?.count ?? 0
+        runs.count(for: id)
     }
-
-    private func start(_ descriptor: ActionDescriptor) -> ActionStart {
-        let runningRuns = runningRunsByActionID[descriptor.id, default: []]
-
-        switch descriptor.duplicatePolicy {
-        case .ignoreNew where !runningRuns.isEmpty:
-            return .skipped(.alreadyRunning)
-
-        case .ignoreNew, .allowConcurrent:
-            let run = ActionRun(actionID: descriptor.id)
-            runningRunsByActionID[descriptor.id, default: []].insert(run.runID)
-            return .started(run)
-        }
-    }
-
-    private func finish(_ run: ActionRun) {
-        runningRunsByActionID[run.actionID]?.remove(run.runID)
-        if runningRunsByActionID[run.actionID]?.isEmpty == true {
-            runningRunsByActionID[run.actionID] = nil
-        }
-    }
-}
-
-private enum ActionStart: Sendable {
-    case started(ActionRun)
-    case skipped(ActionSkipReason)
 }

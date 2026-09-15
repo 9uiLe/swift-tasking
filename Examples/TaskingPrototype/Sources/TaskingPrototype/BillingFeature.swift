@@ -1,12 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// ユースケース 5: すでに async 文脈にいる場所での重複制御(`ActionRunner`)。
-///
-/// `.task`(初回ロード)と `.refreshable`(pull-to-refresh)という 2 つの
-/// async 入口が同じ refresh を呼ぶ。ActionRunner は task を作らないため
-/// 構造化文脈(view 消滅時の自動キャンセル)はそのまま生き、重複だけが
-/// 排除される。これが ActionRunner の設計思想が最も生きる形。
+/// Billing runs directly in the caller’s async context.
 enum BillingAction {
     static let refresh = ActionID("billing.refresh")
 }
@@ -22,7 +17,6 @@ public final class BillingViewModel {
     }
 
     public private(set) var loadState: LoadState = .initial
-    public private(set) var lastOutcomeDescription = ""
 
     private let runner = ActionRunner()
     private let fetchPlans: @MainActor @Sendable () async throws -> [String]
@@ -36,7 +30,9 @@ public final class BillingViewModel {
         self.fetchPlans = fetchPlans
     }
 
-    public func refresh() async {
+    @discardableResult
+    public func refresh() async -> ActionOutcome<[String]> {
+        let previousState = loadState
         let outcome = await runner.run(
             ActionDescriptor(id: BillingAction.refresh, duplicatePolicy: .ignoreNew),
             onStart: { _ in
@@ -52,31 +48,30 @@ public final class BillingViewModel {
         switch outcome {
         case let .succeeded(plans):
             loadState = .loaded(plans)
-            lastOutcomeDescription = "succeeded"
         case .cancelled:
-            // view 消滅などで囲みの構造化 task が cancel された。state は触らない。
-            lastOutcomeDescription = "cancelled"
+            loadState = previousState
         case .skipped(.alreadyRunning):
-            // すでに同じ refresh が走っている。先行 run に結果表示を任せる。
-            lastOutcomeDescription = "skipped"
+            break
         case let .failed(failure):
             loadState = .failed(failure.message)
-            lastOutcomeDescription = "failed: \(failure.typeName)"
         }
+        return outcome
     }
 }
 
 public struct BillingScreen: View {
-    @State private var viewModel: BillingViewModel
+    private let viewModel: BillingViewModel
 
-    public init(viewModel: BillingViewModel = BillingViewModel()) {
-        _viewModel = State(initialValue: viewModel)
+    public init(viewModel: BillingViewModel) {
+        self.viewModel = viewModel
     }
 
     public var body: some View {
         List {
             switch viewModel.loadState {
-            case .initial, .loading:
+            case .initial:
+                Text("Pull to refresh")
+            case .loading:
                 ProgressView()
             case let .loaded(plans):
                 ForEach(plans, id: \.self) { plan in
