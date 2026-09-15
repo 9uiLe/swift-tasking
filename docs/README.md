@@ -12,6 +12,7 @@ Tasking は Swift Concurrency の unstructured task に、所有者・寿命・�
 5. [利用レシピ](recipes.md) — キャンセル、状態更新、終了待ちの実装例
 6. [導入と運用](adoption.md) — Swift 6、ActionID、監視、終了処理の運用ルール
 7. [性能特性](performance.md) — 計算量、測定結果、負荷に応じた判断
+8. [リリース設計と運用](releasing.md) — 所有者の認証、準備PR、公開条件、中断からの再開
 
 インストールと基本的な呼び出し方は [README](../README.md)、実行可能な利用例は
 [TaskingPrototype](../Examples/TaskingPrototype/Sources/TaskingPrototype/PrototypeApp.swift) を参照する。
@@ -38,3 +39,4 @@ Tasking は Swift Concurrency の unstructured task に、所有者・寿命・�
 | [0013](adr/0013-ownership-and-tracking-registries.md) | 追跡索引と所有台帳に内部の更新責務を集約する |
 | [0014](adr/0014-store-terminal-close.md) | Store の終了処理で新規開始を先に停止する |
 | [0015](adr/0015-measured-ownership-overhead.md) | 所有識別と照会のコストを抑える |
+| [0016](adr/0016-owner-authenticated-releases.md) | 所有者の認証とコミット単位のCI検証で公開する |

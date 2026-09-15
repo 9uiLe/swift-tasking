@@ -86,6 +86,7 @@ iOS Simulator 向けビルドを検査する。
 
 公開依存には必要な API を含む SemVer tag を指定する。開発中の checkout を使う方法は
 [README](../README.md#installation) を参照する。
+公開担当者は [リリース設計と運用](releasing.md) のprepare・check・publish手順を使う。
 
 パッケージは default actor isolation と `NonisolatedNonsendingByDefault` を有効にしていない。
 コンパイラ設定を変える際には、Slot の nonisolated async operation がどの executor で動くかを

@@ -55,3 +55,23 @@ Check relative links and the availability requirements of Swift snippets. Exampl
 must identify application-provided dependencies and demonstrate cancellation and
 error handling consistent with the public contract. Record release-facing API
 changes in [CHANGELOG.md](CHANGELOG.md).
+
+## Release tooling
+
+Python 3.10+ tests exercise preparation, validation, and publication with temporary
+Git repositories and simulated GitHub responses:
+
+```sh
+python3 -m unittest discover -s scripts/tests -v
+```
+
+CI runs `Release tooling checks` alongside `Swift package checks` on pull requests
+and master pushes. Publication requires both jobs to succeed for the exact master
+commit being released. Actions uses read-only permissions; the owner publishes
+locally with GitHub CLI authentication.
+
+Keep user-facing entries under `## [Unreleased]` in CHANGELOG.md. Use full URLs in
+release entries because they become the GitHub Release body. The owner's `prepare`
+command moves those entries into a dated release section, updates the README
+dependency and comparison links, and opens a preparation PR.
+See the [release guide](docs/releasing.md) for commands and recovery procedures.
