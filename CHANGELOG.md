@@ -3,15 +3,17 @@
 Release-specific API notes. The [documentation guide](docs/README.md) describes
 the complete design and usage contracts.
 
-## Unreleased
+## [Unreleased]
 
 ### Added
 
+- Owner-authenticated release commands for preparing versioned documentation, checking
+  the source commit and CI, and publishing annotated tags with immutable GitHub Releases.
 - `ViewTaskStore.close()` permanently stops admission without cancelling accepted work.
 - `ViewTaskStore.cancelAndWaitForIdle()` stops admission, requests cancellation, and waits
   for all owned tasks to terminate.
 - The standalone Release benchmark in `Benchmarks/` measures operation costs and compares
-  isolated source snapshots. [Performance characteristics](docs/performance.md) documents
+  isolated source snapshots. [Performance characteristics](https://github.com/9uiLe/swift-tasking/blob/master/docs/performance.md) documents
   workloads, source identities, timing, and memory.
 
 ### Changed
@@ -30,7 +32,7 @@ the complete design and usage contracts.
 - Prototype result publication and cleanup respect invocation generations. Cancellation
   restores loading state, and business failures are handled within feature operations.
 
-## 0.3.0 - 2026-07-15
+## [0.3.0] - 2026-07-15
 
 ### Added
 
@@ -52,3 +54,6 @@ the complete design and usage contracts.
 - `ActionDuplicatePolicy.rejectWhileRunning` is a deprecated alias for `.ignoreNew`.
   Use `.ignoreNew` for construction and exhaustive switches; static aliases do not
   participate in enum exhaustivity checks.
+
+[Unreleased]: https://github.com/9uiLe/swift-tasking/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/9uiLe/swift-tasking/releases/tag/0.3.0

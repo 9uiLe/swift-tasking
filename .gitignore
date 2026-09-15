@@ -3,3 +3,4 @@
 DerivedData/
 .tokensave/
 Benchmarks/results/
+__pycache__/

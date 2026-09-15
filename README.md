@@ -22,7 +22,15 @@ must continue beyond a synchronous callback or method invocation.
 
 ## Installation
 
-To depend on a local checkout, add it to your package dependencies:
+For the published package, add this dependency:
+
+```swift
+.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.3.0")
+```
+
+This documentation describes the checkout's API. Features listed under Unreleased
+in the [release notes](CHANGELOG.md) require a local checkout until published.
+To depend on that checkout:
 
 ```swift
 .package(path: "../swift-tasking")
@@ -40,10 +48,8 @@ For a non-UI target that needs replaceable task ownership:
 .product(name: "TaskingCore", package: "swift-tasking")
 ```
 
-This documentation describes the API in the checkout. For a remote dependency,
-select a published tag containing the APIs you use; see the
-[release notes](CHANGELOG.md). The package requires Swift tools 6.0 and Swift 6
-language mode, including in consuming feature modules.
+The package requires Swift tools 6.0 and Swift 6 language mode, including in
+consuming feature modules.
 
 Deployment targets: iOS 13+, macOS 10.15+, tvOS 13+, watchOS 6+, and visionOS 1+.
 Examples that use Observation or newer SwiftUI APIs require their corresponding OS
@@ -257,6 +263,7 @@ optional priority to Swift's `Task` initializer; `nil` inherits caller priority.
 - [Recipes](docs/recipes.md) — cancellation, state updates, and shutdown
 - [Adoption](docs/adoption.md) — feature boundaries, IDs, and operational checks
 - [Performance](docs/performance.md) — complexity, measurements, and tradeoffs
+- [Releasing](docs/releasing.md) — owner authentication, preparation, and publication
 - [Contributing](CONTRIBUTING.md) — validation and documentation conventions
 
 Swift concurrency references: [structured concurrency](https://developer.apple.com/videos/play/wwdc2021/10134/),
