@@ -1,28 +1,33 @@
-# Repository Guidance
+# リポジトリ指針
 
-## Put knowledge where it will remain useful the longest
+## 言語
 
-Choose the home of each piece of information by its purpose:
+- 文書、公開 API コメント、実装コメント、コミットメッセージ、PR は日本語を第一言語とする。
+- README・コントリビューションガイド・セキュリティポリシーは日本語を正本とし、対応する `.en.md` を同時に保守する。
+- 設計資料・ADR・変更履歴・運用手順は日本語で管理する。
+- コードの識別子、プロトコルのフィールド名、コマンド名、固定された CI チェック名は既存の表記を保つ。
+- MIT ライセンスは原文を保持する。用語の意味は `docs/glossary.md` に揃える。
+- 会話の経緯を知らない新規参加者にも、単独で意味が通じる説明を書く。
 
-- **Production code owns How.** Make behavior understandable through names, types,
-  control flow, and module boundaries. Do not use comments to narrate an implementation
-  that clearer code could express.
-- **Tests own What.** Treat tests as executable specifications. Test names, setup, and
-  assertions must state the observable contract without depending on implementation
-  details.
-- **Commit history owns change-specific Why.** Record the problem, motivation, and context
-  for a change in the commit message, where future maintainers can inspect the decision
-  with its diff. Design rationale that must outlive one change belongs in `docs/adr/`; link
-  the commit message to that ADR instead of duplicating it.
-- **Implementation comments own Why Not.** Keep an implementation comment only when it
-  preserves a constraint that code cannot express: why the obvious approach is unsafe,
-  which alternative was rejected, or which external limitation forces the current shape.
+## 知識を長く役立つ場所に置く
 
-Public API documentation comments (`///`) own the observable contract of the API surface.
-The Why-Not rule governs implementation comments (`//` and `/* ... */`), not API
-documentation. Test and instructional-example comments may state the behavior they specify
-or teach, but should not narrate an implementation that clearer code could express.
+情報の目的に合わせて置き場所を選ぶ。
 
-When refactoring, first improve naming or structure. Remove comments that merely restate
-the code, move behavioral requirements into tests, and retain comments only when losing
-the rejected-alternative or hidden-constraint context would invite a regression.
+- **実装コードは How を担う。** 名前・型・制御フロー・モジュール境界から動作を読み取れるようにする。
+  コードを明確にすれば表せる実装の説明を、コメントで繰り返さない。
+- **テストは What を担う。** テストを実行可能な仕様として扱う。テスト名・準備・アサーションで、
+  実装の内部構造に依存せず、観測できる契約を示す。
+- **コミット履歴は変更固有の Why を担う。** 変更の問題・動機・背景をコミットメッセージに記録し、
+  将来の保守担当者が差分と一緒に判断を確認できるようにする。個別の変更を越えて必要な設計根拠は
+  `docs/adr/` に置き、コミットメッセージからリンクして重複を避ける。
+- **実装コメントは Why Not を担う。** コードで表現できない制約を残す場合に限って使う。
+  一見自然な方法が安全でない理由、採用しなかった代替案、現在の形を必要とする外部の制約などが該当する。
+
+公開 API の文書コメント（`///`）は、その API の観測可能な契約を記述する。
+Why Not の原則は実装コメント（`//` と `/* ... */`）に適用し、公開 API の文書コメントには適用しない。
+テストや学習用の例のコメントは、仕様や学ぶべき振る舞いを示してよい。
+ただし、コードを明確にすれば伝わる実装の逐語的な説明は避ける。
+
+リファクタリングでは、まず命名や構造を改善する。コードの言い換えにすぎないコメントは削除し、
+振る舞いの要件はテストへ移す。採用しなかった代替案や隠れた制約を失うと不具合の再発を招く場合に、
+その背景をコメントとして残す。

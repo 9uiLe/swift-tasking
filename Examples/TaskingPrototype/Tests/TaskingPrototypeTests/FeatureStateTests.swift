@@ -100,7 +100,7 @@ struct FeatureStateTests {
 
     @Test func searchHandlesBusinessFailureBeforeItReachesStore() async {
         let model = SearchViewModel(performSearch: { _ in throw ServiceError.offline })
-        let store = ViewTaskStore { _, _ in Issue.record("Business error escaped the ViewModel.") }
+        let store = ViewTaskStore { _, _ in Issue.record("業務上のエラーが ViewModel の外へ漏れました。") }
         store.start(id: SearchAction.query, lifetime: .screenBound) { c in
             try await model.search(term: "query", cancellation: c)
         }

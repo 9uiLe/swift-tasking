@@ -53,6 +53,6 @@ import Tasking
         [scale] cancelAll 5k: \(cancelAllDuration)
         """)
 
-        // Timings are diagnostic only; sanitizer and CI load are not performance contracts.
+        // 時間は診断にだけ使う。Sanitizer や CI の負荷下での所要時間を性能の契約にしない。
     }
 }

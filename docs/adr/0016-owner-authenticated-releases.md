@@ -11,7 +11,9 @@ TaskingとTaskingCoreは1つのSwift packageであり、Gitタグが配布ソー
 - 所有者がstable SemVerを選び、ローカルのGitHub CLI認証で操作する。
 - prepareはmasterの取得済みSHAから文書を更新したPRを作る。公開はPRのマージ後に行う。
 - check / publishは、対象SHAのmaster push CIでSwiftとリリースツールの両ジョブが成功したことを要求する。
-- CHANGELOGの最新節、README依存、注釈付きタグ、Release本文を同じ版に揃える。
+- CHANGELOGの最新節、日本語・英語両READMEの依存、注釈付きタグ、Release本文を同じ版に揃える。
+- prepareとcheck / publishの両方でREADMEの欠落・依存指定の重複・バージョンの不一致を拒否する。
+- Release本文と準備PRは日本語で作成する。
 - 公開は検証、タグ作成、ドラフト作成、照合、immutable Releaseの公開の順に行う。
 - タグが作成済みならそのコミットから再開する。競合するタグやReleaseは上書きしない。
 - GitHub Actionsは検証専用とし、公開資格情報を持たない。

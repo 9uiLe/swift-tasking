@@ -1,9 +1,8 @@
 import Foundation
 
-/// A stable ID for identifying an Action that starts from a user operation or lifecycle event.
+/// ユーザー操作やライフサイクルイベントから始まる Action の種類を識別する安定した ID。
 ///
-/// Declare these as constants in a feature-specific namespace instead of writing string
-/// literals directly at call sites.
+/// 呼び出し箇所に文字列リテラルを直接書かず、機能ごとの名前空間に定数として宣言する。
 public struct ActionID: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
     public let rawValue: String
 
@@ -24,7 +23,7 @@ public struct ActionID: Hashable, Sendable, RawRepresentable, ExpressibleByStrin
     }
 }
 
-/// A stable ID for one concrete Action run.
+/// Action の1回の実行を識別する安定した ID。
 public struct ActionRunID: Hashable, Sendable, RawRepresentable, CustomStringConvertible {
     public let rawValue: UUID
 
@@ -37,7 +36,7 @@ public struct ActionRunID: Hashable, Sendable, RawRepresentable, CustomStringCon
     }
 }
 
-/// Metadata for one concrete Action run.
+/// Action の1回の実行に関するメタデータ。
 public struct ActionRun: Hashable, Sendable {
     public let actionID: ActionID
     public let runID: ActionRunID
@@ -48,7 +47,7 @@ public struct ActionRun: Hashable, Sendable {
     }
 }
 
-/// Why `ActionRunner` declined to run an Action.
+/// `ActionRunner` が Action の実行を受け付けなかった理由。
 public enum ActionSkipReason: Equatable, Sendable {
     case alreadyRunning
 }

@@ -1,7 +1,7 @@
-/// A logical lifetime for tasks owned by `ViewTaskStore`.
+/// `ViewTaskStore` が所有するタスクの論理的な寿命。
 ///
-/// Built-in values represent common UI ownership scopes.
-/// You can also define feature-specific scopes such as `"accountSettings"`.
+/// 組み込み値は一般的な UI の所有スコープを表す。
+/// `"accountSettings"` のような機能固有のスコープも定義できる。
 public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
     public static let screenBound = ActionLifetime("screenBound")
     public static let sceneBound = ActionLifetime("sceneBound")
@@ -26,28 +26,28 @@ public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleB
     }
 }
 
-/// The start policy used when a task with the same `ActionID` is already being tracked.
+/// 同じ `ActionID` のタスクを追跡している場合の開始ポリシー。
 public enum TaskStartPolicy: Equatable, Sendable {
-    /// Keep the existing task and skip the new request.
+    /// 既存のタスクを継続し、新しい要求をスキップする。
     case ignoreNew
 
-    /// Cancel tasks tracked as the same Action, then start the new request.
+    /// 同じ Action として追跡中のタスクをキャンセルし、新しい要求を開始する。
     ///
-    /// Cancellation is cooperative. If old work ignores cancellation, it may continue
-    /// after the store has stopped treating it as running for duplicate-policy decisions.
+    /// キャンセルは協調的に行われる。古い処理がキャンセルを無視した場合、
+    /// Store が重複判定の対象から外した後も実行が続くことがある。
     case cancelExisting
 
-    /// Start an additional task with the same Action ID.
+    /// 同じ Action ID のタスクを追加で開始する。
     case allowConcurrent
 }
 
-/// Why a store declined to start an operation.
+/// Store が処理の開始を受け付けなかった理由。
 public enum TaskStartSkipReason: Equatable, Sendable {
     case alreadyRunning
     case closed
 }
 
-/// Whether the store admitted one concrete run.
+/// Store が1回の実行を受け付けたかどうかを表す。
 public enum TaskStartOutcome: Equatable, Sendable {
     case started(ActionRun)
     case skipped(TaskStartSkipReason)

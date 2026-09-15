@@ -1,7 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// Owns app-lifetime work and its display state independently of any screen.
+/// 画面から独立して、アプリ寿命の処理とその表示状態を所有する。
 @MainActor
 public final class AppTaskContainer {
     public static let shared = AppTaskContainer()
@@ -71,7 +71,7 @@ public struct SyncSettingsScreen: View {
 
     public var body: some View {
         Form {
-            Button("Sync now") {
+            Button("今すぐ同期") {
                 // アプリ寿命の store に登録するので、この画面を閉じても同期は続く。
                 container.store.start(
                     id: SyncAction.fullSync,
@@ -84,7 +84,7 @@ public struct SyncSettingsScreen: View {
             .disabled(viewModel.syncState == .syncing)
 
             if viewModel.syncState == .syncing {
-                ProgressView("Syncing…")
+                ProgressView("同期中…")
             }
         }
         // 注意: ここに onDisappear での cancel は「書かない」ことが仕様。

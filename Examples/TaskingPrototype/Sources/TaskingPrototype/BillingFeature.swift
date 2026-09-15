@@ -1,7 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// Billing runs directly in the caller’s async context.
+/// 課金処理は呼び出し元の async コンテキストで直接実行する。
 enum BillingAction {
     static let refresh = ActionID("billing.refresh")
 }
@@ -70,7 +70,7 @@ public struct BillingScreen: View {
         List {
             switch viewModel.loadState {
             case .initial:
-                Text("Pull to refresh")
+                Text("引っ張って更新")
             case .loading:
                 ProgressView()
             case let .loaded(plans):

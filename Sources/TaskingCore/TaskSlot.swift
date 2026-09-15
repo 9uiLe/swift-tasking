@@ -1,8 +1,8 @@
-/// Owns one active unstructured task outside UI isolation.
+/// UI の分離領域の外で、アクティブな非構造化タスクを1つ所有する。
 ///
-/// Replacing or cancelling requests cooperative cancellation. Superseded operations
-/// remain owned until they finish, so `waitForIdle()` also waits for that work.
-/// Avoid strongly capturing the object that owns the slot inside an operation.
+/// 差し替えとキャンセルでは協調キャンセルを要求する。差し替えた処理も終了まで所有するため、
+/// `waitForIdle()` はその処理の終了も待つ。
+/// 処理内から Slot の所有者を強参照しないこと。
 public actor TaskSlot {
     private var tasks = OwnedTasks<TaskOwnership>()
     private var activeTask: TaskOwnership?
@@ -14,10 +14,10 @@ public actor TaskSlot {
         tasks.cancelAll()
     }
 
-    /// Cancels the active task and starts a replacement, or returns `false` after closure.
+    /// アクティブなタスクをキャンセルして代わりのタスクを開始する。受付の閉鎖後は `false` を返す。
     ///
-    /// The operation must inspect its cancellation context at meaningful suspension
-    /// boundaries. The priority is forwarded to `Task`; `nil` inherits caller priority.
+    /// 処理は重要な中断点でキャンセルコンテキストを確認すること。
+    /// 優先度は `Task` に渡し、`nil` なら呼び出し元の優先度を継承する。
     @discardableResult
     public func replace(
         priority: TaskPriority? = nil,
@@ -28,7 +28,7 @@ public actor TaskSlot {
 
         let ownership = TaskOwnership()
         let context = ownership.inheritingCurrent
-        // Retaining the slot here would prevent its deinit cancellation safety net.
+        // ここで Slot を保持すると、deinit によるキャンセルが働かなくなる。
         let handle = Task(priority: priority) { [weak self] in
             await TaskOwnership.$current.withValue(context) {
                 await operation(CancellationContext())
@@ -40,32 +40,32 @@ public actor TaskSlot {
         return true
     }
 
-    /// Permanently rejects replacements without cancelling existing work.
-    /// Closing is idempotent. Follow with `waitForIdle()` for a graceful drain.
+    /// 既存の処理をキャンセルせずに、差し替えの受付を終端状態へ移す。
+    /// 繰り返し閉じても結果は変わらない。処理を完了させて終了するには、続けて `waitForIdle()` を使う。
     public func close() {
         isClosed = true
     }
 
-    /// Requests cooperative cancellation of the active task. Admission stays open.
+    /// アクティブなタスクに協調キャンセルを要求する。受付は開いたままにする。
     public func cancel() {
         guard let activeTask else { return }
         tasks.cancel(activeTask)
         self.activeTask = nil
     }
 
-    /// Closes admission, requests cancellation, and waits for all owned work to finish.
-    /// No replacement can start while this method is suspended. Closure is terminal.
+    /// 受付を閉じ、キャンセルを要求して、所有するすべての処理の終了を待つ。
+    /// このメソッドの中断中も差し替えを開始できない。閉鎖は終端状態である。
     public func cancelAndWaitForIdle() async {
         close()
         cancel()
         await waitForIdle()
     }
 
-    /// Waits for all owned tasks, including replacements admitted during the wait.
+    /// 待機中に受け付けた差し替えも含め、所有するすべてのタスクを待つ。
     ///
-    /// An operation must not wait on its own slot. Debug builds assert on this misuse;
-    /// release builds exclude its inherited ownership context and wait for other work.
-    /// Cancelling the caller does not cancel owned work or interrupt this wait.
+    /// 処理は自分を所有する Slot の終了を待ってはならない。Debug ビルドではアサーションで検出する。
+    /// Release ビルドでは継承された所有文脈を除き、ほかの処理を待つ。
+    /// 呼び出し元をキャンセルしても、所有する処理をキャンセルしたり、この待機を中断したりしない。
     public func waitForIdle() async {
         let excluded = tasks.keysExcludedFromWait()
         while let handle = tasks.firstHandle(excluding: excluded) {

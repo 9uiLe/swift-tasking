@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare isolated Release builds, retaining raw samples and the measured sources."""
+"""分離した Release ビルドを比較し、生の測定値と測定対象のソースを保存する。"""
 import argparse
 import datetime
 import hashlib
@@ -41,15 +41,15 @@ def build(root, log):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--baseline-ref", default="HEAD")
-    source.add_argument("--baseline-path", type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--samples", default=7, type=int)
-    parser.add_argument("--sizes", default="100,1000,10000")
-    parser.add_argument("--queries", default=1000, type=int)
+    source.add_argument("--baseline-ref", default="HEAD", help="比較元の Git リビジョン")
+    source.add_argument("--baseline-path", type=Path, help="比較元のソースディレクトリ")
+    parser.add_argument("--output", required=True, type=Path, help="測定結果の保存先")
+    parser.add_argument("--samples", default=7, type=int, help="測定回数")
+    parser.add_argument("--sizes", default="100,1000,10000", help="測定する実行数（カンマ区切り）")
+    parser.add_argument("--queries", default=1000, type=int, help="Store の1バッチあたりの照会回数")
     args = parser.parse_args()
     if args.samples <= 0 or args.queries <= 0:
-        parser.error("samples and queries must be positive")
+        parser.error("samples と queries は正の値にしてください")
     args.output.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="tasking-performance-"))
     baseline = work / "baseline"
@@ -82,10 +82,10 @@ def main():
         "swift": run(["swift", "--version"], capture_output=True).stdout.strip(),
         "samples": args.samples, "sizes": args.sizes, "queries": args.queries,
         "binaries": {key: str(value) for key, value in binaries.items()},
-        "method": "Separate Release processes, alternating order, one discarded warmup per scenario."
+        "method": "独立した Release プロセスの実行順を交互に入れ替え、シナリオごとに1回のウォームアップ結果を除外。"
     }
-    (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    print(json.dumps(metadata), flush=True)
+    (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
+    print(json.dumps(metadata, ensure_ascii=False), flush=True)
     rows = []
     memory = []
     with (args.output / "samples.jsonl").open("w") as output:
@@ -97,7 +97,7 @@ def main():
                              capture_output=True, timeout=180)
                 match = re.search(r"(\d+)\s+maximum resident set size", result.stderr)
                 if not match:
-                    raise RuntimeError("Could not read maximum resident set size")
+                    raise RuntimeError("最大常駐メモリを読み取れませんでした")
                 memory.append(dict(build=name, sample=sample, maximum_rss_bytes=int(match.group(1))))
                 for line in result.stdout.splitlines():
                     row = json.loads(line)
@@ -105,7 +105,7 @@ def main():
                     rows.append(row)
                     output.write(json.dumps(row) + "\n")
             output.flush()
-            print("Finished sample", sample + 1, "of", args.samples, flush=True)
+            print(f"サンプル {sample + 1}/{args.samples} 完了", flush=True)
     (args.output / "memory.json").write_text(json.dumps(memory, indent=2) + "\n")
     grouped = {}
     for row in rows:

@@ -1,4 +1,4 @@
-/// The single index of tracked runs; cancelled work belongs only to handle ownership.
+/// 追跡中の実行を管理する単一の索引。キャンセル済みの処理はハンドルの所有だけに残る。
 struct ActionRuns<Metadata> {
     private var actions: [ActionID: [ActionRunID: Metadata]] = [:]
 

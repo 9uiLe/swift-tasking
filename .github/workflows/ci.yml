@@ -10,8 +10,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege: this workflow only reads the repo. Any future step that
-# needs to write (comments, SARIF upload, OIDC) must opt in at the job level.
+# コメント投稿・SARIF アップロード・OIDC などの権限が必要になった場合も、
+# ワークフロー全体には与えず、必要なジョブだけに付与する。
 permissions:
   contents: read
 
@@ -20,44 +20,44 @@ jobs:
     name: Release tooling checks
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: リポジトリを取得
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - name: Show Python version
+      - name: Python のバージョンを表示
         run: python3 --version
 
-      - name: Test release commands
+      - name: リリースコマンドをテスト
         run: python3 -m unittest discover -s scripts/tests -v
 
   swift:
     name: Swift package checks
     runs-on: macos-15
     steps:
-      - name: Check out repository
-        # Pinned to a full commit SHA (supply-chain hardening); Dependabot keeps
-        # the trailing tag comment in sync when it proposes an upgrade.
+      - name: リポジトリを取得
+        # 参照先の差し替えを防ぐため完全なコミット SHA に固定する。
+        # Dependabot は更新提案時に末尾のバージョンコメントも揃える。
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - name: Show Swift version
+      - name: Swift のバージョンを表示
         run: swift --version
 
-      - name: Show Xcode version
+      - name: Xcode のバージョンを表示
         run: xcodebuild -version
 
-      - name: Build package with strict concurrency and warnings as errors
+      - name: 厳密な並行性チェックと警告のエラー扱いで package をビルド
         run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test package
+      - name: package をテスト
         run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test package in release
+      - name: Release で package をテスト
         run: swift test -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test package with Thread Sanitizer
+      - name: Thread Sanitizer で package をテスト
         run: swift test --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       # swift build --triple + SDK 指定はツールチェーン間で挙動が揺れる
@@ -65,24 +65,24 @@ jobs:
       # manifest コンパイルを壊す)ため、バージョン非依存の xcodebuild を使う。
       # 複数 product をまとめて検証する package scheme を使う。
       # scheme 名はパッケージ名由来で、checkout ディレクトリ名に依存しない。
-      - name: Build for iOS 13 floor
+      - name: iOS 13 を最低要件としてビルド
         run: |
           xcodebuild build -quiet \
             -scheme swift-tasking-Package \
             -destination "generic/platform=iOS Simulator"
 
-      - name: Build prototype with strict concurrency and warnings as errors
+      - name: 厳密な並行性チェックと警告のエラー扱いでプロトタイプをビルド
         working-directory: Examples/TaskingPrototype
         run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test prototype package
+      - name: プロトタイプをテスト
         working-directory: Examples/TaskingPrototype
         run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test prototype package in release
+      - name: Release でプロトタイプをテスト
         working-directory: Examples/TaskingPrototype
         run: swift test -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
-      - name: Test prototype package with Thread Sanitizer
+      - name: Thread Sanitizer でプロトタイプをテスト
         working-directory: Examples/TaskingPrototype
         run: swift test --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors

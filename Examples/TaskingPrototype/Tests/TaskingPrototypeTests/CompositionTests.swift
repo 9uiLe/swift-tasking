@@ -81,7 +81,7 @@ struct CompositionTests {
         await first.waitForArrivals()
         await second.waitForArrivals()
         let duplicate = store.start(id: DownloadAction.item("a"), lifetime: .screenBound) { _ in
-            Issue.record("Duplicate download executed.")
+            Issue.record("重複したダウンロードが実行されました。")
         }
         #expect(duplicate.skipReason == .alreadyRunning)
         store.cancel(runA)
