@@ -1,0 +1,758 @@
+{
+  "recorded_at": "2026-09-15T16:56:40.069513+00:00",
+  "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M1 Pro",
+  "swift": "Apple Swift version 6.3.2 (swiftlang-6.3.2.1.108 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "samples": 7,
+  "source_hashes": {
+    "baseline": "60113acf7b653bc4aefdbe086824821367e07fe510b2b03c09e6c29c0436317b",
+    "working": "656575aabc74a06a6bb8625cc7ceb77f7a6dddf3a64bc332186cfa0ca7d09734"
+  },
+  "baseline_description": "Reference implementation: UUID ownership markers, lifetime existence via counting, ownership-wait scan even for empty task-local contexts; separate tracking and ownership registries",
+  "working_description": "Measured implementation: retained reference ownership identity, early-return lifetime existence query, empty-context fast path; separate tracking and ownership registries",
+  "measurements": [
+    {
+      "scenario": "runner",
+      "metric": "run",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.103334,
+      "working_ms": 0.102416,
+      "ratio": 0.9911161863471848
+    },
+    {
+      "scenario": "runner",
+      "metric": "run",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.990125,
+      "working_ms": 0.983791,
+      "ratio": 0.9936028279257669
+    },
+    {
+      "scenario": "runner",
+      "metric": "run",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 9.754917,
+      "working_ms": 9.6825,
+      "ratio": 0.9925763591837837
+    },
+    {
+      "scenario": "slot",
+      "metric": "drain",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.190625,
+      "working_ms": 0.163041,
+      "ratio": 0.8552970491803279
+    },
+    {
+      "scenario": "slot",
+      "metric": "drain",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.379875,
+      "working_ms": 1.387125,
+      "ratio": 1.0052540991031795
+    },
+    {
+      "scenario": "slot",
+      "metric": "drain",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 14.573542,
+      "working_ms": 13.725,
+      "ratio": 0.9417751703738185
+    },
+    {
+      "scenario": "slot",
+      "metric": "replace",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.219791,
+      "working_ms": 0.173875,
+      "ratio": 0.7910924469154789
+    },
+    {
+      "scenario": "slot",
+      "metric": "replace",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.247209,
+      "working_ms": 1.118,
+      "ratio": 0.49750601746433026
+    },
+    {
+      "scenario": "slot",
+      "metric": "replace",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 19.969458,
+      "working_ms": 10.794542,
+      "ratio": 0.5405525778416219
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "cancel-lifetime",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.082375,
+      "working_ms": 0.077083,
+      "ratio": 0.9357572078907435
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "cancel-lifetime",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.8265,
+      "working_ms": 0.689333,
+      "ratio": 0.8340387174833636
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "cancel-lifetime",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 8.545,
+      "working_ms": 8.661459,
+      "ratio": 1.0136289057928614
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "drain",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.255167,
+      "working_ms": 0.224833,
+      "ratio": 0.8811209913507625
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "drain",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.060125,
+      "working_ms": 1.869875,
+      "ratio": 0.9076512347551725
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "drain",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 20.046583,
+      "working_ms": 17.360917,
+      "ratio": 0.8660287391621805
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "idle-after-burst",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.827875,
+      "working_ms": 0.494667,
+      "ratio": 0.5975141174694247
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "idle-after-burst",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.752792,
+      "working_ms": 0.44,
+      "ratio": 0.5844908022401938
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "idle-after-burst",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 0.97825,
+      "working_ms": 0.557375,
+      "ratio": 0.5697674418604651
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "ignore-new",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.169042,
+      "working_ms": 0.167667,
+      "ratio": 0.9918659268110884
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "ignore-new",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.172708,
+      "working_ms": 0.167208,
+      "ratio": 0.9681543414317808
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "ignore-new",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 0.176292,
+      "working_ms": 0.170042,
+      "ratio": 0.9645474553581558
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-count",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.151709,
+      "working_ms": 0.168041,
+      "ratio": 1.1076534681528452
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-count",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.44725,
+      "working_ms": 1.394458,
+      "ratio": 0.963522542753498
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-count",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 14.10625,
+      "working_ms": 14.030041,
+      "ratio": 0.9945975011076651
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-hit",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.155333,
+      "working_ms": 0.033792,
+      "ratio": 0.2175455312135863
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-hit",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.450625,
+      "working_ms": 0.033375,
+      "ratio": 0.023007324429125377
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-hit",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 14.107667,
+      "working_ms": 0.033084,
+      "ratio": 0.002345107805564166
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-miss",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.343458,
+      "working_ms": 0.523,
+      "ratio": 1.5227480507078013
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-miss",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.969625,
+      "working_ms": 4.845292,
+      "ratio": 1.631617460117018
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "lifetime-miss",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 28.488042,
+      "working_ms": 48.48675,
+      "ratio": 1.7020035985625126
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "start",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.234125,
+      "working_ms": 0.192958,
+      "ratio": 0.8241665776828617
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "start",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.156667,
+      "working_ms": 1.700125,
+      "ratio": 0.7883113155623933
+    },
+    {
+      "scenario": "store.1-actions",
+      "metric": "start",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 20.882292,
+      "working_ms": 16.76,
+      "ratio": 0.8025938915134413
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "cancel-lifetime",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.093334,
+      "working_ms": 0.080708,
+      "ratio": 0.8647223948400369
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "cancel-lifetime",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.83125,
+      "working_ms": 0.832834,
+      "ratio": 1.0019055639097743
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "cancel-lifetime",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 8.397958,
+      "working_ms": 7.835792,
+      "ratio": 0.9330592032015402
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "drain",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.238459,
+      "working_ms": 0.214209,
+      "ratio": 0.8983053690571545
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "drain",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.963625,
+      "working_ms": 1.674333,
+      "ratio": 0.8526745177923484
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "drain",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 19.839791,
+      "working_ms": 17.671333,
+      "ratio": 0.8907015703945671
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "idle-after-burst",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.813166,
+      "working_ms": 0.48,
+      "ratio": 0.5902853783852251
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "idle-after-burst",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.749334,
+      "working_ms": 0.430458,
+      "ratio": 0.5744541152543459
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "idle-after-burst",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 1.002875,
+      "working_ms": 0.569459,
+      "ratio": 0.5678264988159043
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "ignore-new",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 0.170417,
+      "working_ms": 0.169166,
+      "ratio": 0.9926591830627226
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "ignore-new",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.17125,
+      "working_ms": 0.173875,
+      "ratio": 1.0153284671532845
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "ignore-new",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 0.168959,
+      "working_ms": 0.167208,
+      "ratio": 0.9896365390420161
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-count",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 1.6105,
+      "working_ms": 1.6185,
+      "ratio": 1.004967401428128
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-count",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.344375,
+      "working_ms": 2.3435,
+      "ratio": 0.9996267661956812
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-count",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 17.668209,
+      "working_ms": 17.422083,
+      "ratio": 0.9860695557767061
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-hit",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 1.650916,
+      "working_ms": 0.032709,
+      "ratio": 0.01981263734799348
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-hit",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.278417,
+      "working_ms": 0.032875,
+      "ratio": 0.014428877593522169
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-hit",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 17.548375,
+      "working_ms": 0.033666,
+      "ratio": 0.001918468234238213
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-miss",
+      "size": 100,
+      "operations": 1000,
+      "baseline_ms": 1.776334,
+      "working_ms": 1.753042,
+      "ratio": 0.9868876010930376
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-miss",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 4.0625,
+      "working_ms": 6.429292,
+      "ratio": 1.582594953846154
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "lifetime-miss",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 33.510375,
+      "working_ms": 51.642333,
+      "ratio": 1.5410849028099505
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "start",
+      "size": 100,
+      "operations": 100,
+      "baseline_ms": 0.24375,
+      "working_ms": 0.199167,
+      "ratio": 0.8170953846153847
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "start",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 2.16225,
+      "working_ms": 1.763625,
+      "ratio": 0.8156434269857787
+    },
+    {
+      "scenario": "store.100-actions",
+      "metric": "start",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 21.257083,
+      "working_ms": 16.938625,
+      "ratio": 0.7968461618181572
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "cancel-lifetime",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.899667,
+      "working_ms": 0.899833,
+      "ratio": 1.0001845127141487
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "drain",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.898083,
+      "working_ms": 1.734667,
+      "ratio": 0.9139047133344538
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "idle-after-burst",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.763834,
+      "working_ms": 0.441291,
+      "ratio": 0.5777315490014846
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "ignore-new",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 0.175708,
+      "working_ms": 0.173334,
+      "ratio": 0.9864889475721081
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "lifetime-count",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 16.127167,
+      "working_ms": 16.151917,
+      "ratio": 1.001534677479312
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "lifetime-hit",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 16.126208,
+      "working_ms": 0.03225,
+      "ratio": 0.0019998501817662284
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "lifetime-miss",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 17.599917,
+      "working_ms": 17.070625,
+      "ratio": 0.9699264490849586
+    },
+    {
+      "scenario": "store.1000-actions",
+      "metric": "start",
+      "size": 1000,
+      "operations": 1000,
+      "baseline_ms": 1.996292,
+      "working_ms": 1.62825,
+      "ratio": 0.815637191352768
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "cancel-lifetime",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 10.919375,
+      "working_ms": 10.160709,
+      "ratio": 0.9305211149905558
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "drain",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 19.96125,
+      "working_ms": 17.642958,
+      "ratio": 0.8838603794852526
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "idle-after-burst",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 0.979959,
+      "working_ms": 0.557375,
+      "ratio": 0.5687737956383889
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "ignore-new",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 0.196041,
+      "working_ms": 0.191625,
+      "ratio": 0.9774740998056529
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "lifetime-count",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 175.990166,
+      "working_ms": 182.9705,
+      "ratio": 1.0396632048179328
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "lifetime-hit",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 185.451083,
+      "working_ms": 0.032958,
+      "ratio": 0.0001777180238952824
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "lifetime-miss",
+      "size": 10000,
+      "operations": 1000,
+      "baseline_ms": 188.4785,
+      "working_ms": 188.051833,
+      "ratio": 0.9977362563899861
+    },
+    {
+      "scenario": "store.10000-actions",
+      "metric": "start",
+      "size": 10000,
+      "operations": 10000,
+      "baseline_ms": 21.355208,
+      "working_ms": 17.678667,
+      "ratio": 0.8278386705481866
+    }
+  ],
+  "memory_samples": [
+    {
+      "build": "baseline",
+      "sample": 0,
+      "maximum_rss_bytes": 45858816
+    },
+    {
+      "build": "working",
+      "sample": 0,
+      "maximum_rss_bytes": 45711360
+    },
+    {
+      "build": "working",
+      "sample": 1,
+      "maximum_rss_bytes": 46481408
+    },
+    {
+      "build": "baseline",
+      "sample": 1,
+      "maximum_rss_bytes": 46055424
+    },
+    {
+      "build": "baseline",
+      "sample": 2,
+      "maximum_rss_bytes": 45793280
+    },
+    {
+      "build": "working",
+      "sample": 2,
+      "maximum_rss_bytes": 45940736
+    },
+    {
+      "build": "working",
+      "sample": 3,
+      "maximum_rss_bytes": 45858816
+    },
+    {
+      "build": "baseline",
+      "sample": 3,
+      "maximum_rss_bytes": 45842432
+    },
+    {
+      "build": "baseline",
+      "sample": 4,
+      "maximum_rss_bytes": 45662208
+    },
+    {
+      "build": "working",
+      "sample": 4,
+      "maximum_rss_bytes": 46022656
+    },
+    {
+      "build": "working",
+      "sample": 5,
+      "maximum_rss_bytes": 45842432
+    },
+    {
+      "build": "baseline",
+      "sample": 5,
+      "maximum_rss_bytes": 44826624
+    },
+    {
+      "build": "baseline",
+      "sample": 6,
+      "maximum_rss_bytes": 45793280
+    },
+    {
+      "build": "working",
+      "sample": 6,
+      "maximum_rss_bytes": 45875200
+    }
+  ],
+  "time_profiler": {
+    "baseline": {
+      "cpu_sample_weight_ms": 11640.0,
+      "uuid_init_inclusive_percent": 8.170103092783505,
+      "ownership_wait_scan_inclusive_percent": 2.663230240549828
+    },
+    "working": {
+      "cpu_sample_weight_ms": 7994.0,
+      "uuid_init_inclusive_percent": 4.640980735551663,
+      "ownership_wait_scan_inclusive_percent": 0.0
+    },
+    "method": "Time Profiler workload with one query per batch. Capture lengths and repetition counts differ; inclusive sample percentages are supporting observations, not timing speedup ratios. Zero means no samples observed."
+  },
+  "method": "Separate Release processes with alternating build order; seven measured samples, one discarded warmup per scenario. Hashes identify the measured Package.swift and Sources snapshots, including source comments."
+}

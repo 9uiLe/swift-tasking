@@ -1,12 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// ユースケース 2: 逐次検索(検索語が変わるたびに前の検索をキャンセル = `.cancelExisting`)。
-///
-/// `.cancelExisting` では「キャンセルされた旧 run」と「新 run」が同じ ViewModel
-/// state を共有するため、旧 run の後始末(defer 等)が新 run の state を
-/// 上書きしうる。ここでは世代カウンタで「最新 run だけが state を確定できる」
-/// ようにガードしている(検証テスト F2 参照)。
+/// Search replaces previous work; the ViewModel guards result publication.
 enum SearchAction {
     static let query = ActionID("search.query")
 }
@@ -17,7 +12,9 @@ public final class SearchViewModel {
     public private(set) var results: [String] = []
     public private(set) var isSearching = false
 
-    private var generation = 0
+    @ObservationIgnored private var latestSearch = UUID()
+    public private(set) var errorMessage: String?
+
     private let performSearch: @MainActor @Sendable (String) async throws -> [String]
 
     public init(
@@ -30,30 +27,36 @@ public final class SearchViewModel {
     }
 
     public func search(term: String, cancellation: CancellationContext) async throws {
-        generation += 1
-        let myGeneration = generation
+        let search = UUID()
+        latestSearch = search
         isSearching = true
+        errorMessage = nil
         defer {
-            // 自分より新しい run が始まっていたら、state の確定権は新 run にある。
-            if generation == myGeneration {
-                isSearching = false
-            }
+            if latestSearch == search { isSearching = false }
         }
 
-        try cancellation.check()
-        let found = try await performSearch(term)
-        try cancellation.check()
-        results = found
+        do {
+            try cancellation.check()
+            let found = try await performSearch(term)
+            try cancellation.check()
+            guard latestSearch == search else { return }
+            results = found
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            guard latestSearch == search else { return }
+            errorMessage = String(describing: error)
+        }
     }
 }
 
 public struct SearchScreen: View {
     @State private var taskStore = ViewTaskStore()
-    @State private var viewModel: SearchViewModel
+    private let viewModel: SearchViewModel
     @State private var term = ""
 
-    public init(viewModel: SearchViewModel = SearchViewModel()) {
-        _viewModel = State(initialValue: viewModel)
+    public init(viewModel: SearchViewModel) {
+        self.viewModel = viewModel
     }
 
     public var body: some View {
@@ -71,6 +74,10 @@ public struct SearchScreen: View {
 
             if viewModel.isSearching {
                 ProgressView()
+            }
+
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage).foregroundStyle(.red)
             }
 
             ForEach(viewModel.results, id: \.self) { result in

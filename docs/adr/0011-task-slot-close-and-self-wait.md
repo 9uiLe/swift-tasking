@@ -1,50 +1,30 @@
-# ADR-0011: TaskSlot は terminal close と自己待機除外を持つ
+# ADR-0011: TaskSlot の受付停止・終了待ち・自己待機の契約を定める
 
-- ステータス: 実装済み
-- 日付: 2026-07-14
+## 前提
 
-## 文脈
-
-owner actor が `TaskSlot.cancel()` の後に `waitForIdle()` を呼んでも、最初の `await` で
-owner と slot の両 actor は再入可能になる。待機中に届いた `replace` は従来 API の仕様上
-受理されるため、teardown 後の新規 operation が未キャンセルで実行され得る。
-
-また、slot が所有する operation から同じ slot の `waitForIdle()` を呼ぶと、自分自身の
-終了を内側から待つため永久に復帰しない。文書上の禁止だけでは release の停止性を守れない。
+actor は suspension 中に再入できる。`cancel()` と `waitForIdle()` だけでは、待機中の
+`replace` が新しい work を受け付ける。所有者の終了には、新規受付を止める操作が必要になる。
+また、operation が自分自身の終了を待つと循環待機になる。
 
 ## 決定
 
-- `close()` は slot を terminal 状態へ移し、以後の `replace` を拒否する。実行中 task は
-  cancel しないため、`close()` → `waitForIdle()` で graceful drain を表現できる。
-- `replace` は `@discardableResult Bool` を返す。`false` のとき operation は作成も実行も
-  されない。
-- `cancelAndWaitForIdle()` は suspension のない actor 隔離区間で close と active task の
-  cancel を行い、その後に全 owned task の実終了を待つ。
-- 各 owned operation の `(slot identity, task ID)` を TaskLocal に記録する。
-  `waitForIdle()` が同じ ownership context から呼ばれた場合、debug assertion で契約違反を
-  報告し、release では該当 task だけを待機対象から外して他の owned task を待つ。
+- `close()` は新規 `replace` を恒久的に拒否する。冪等であり、実行中の task はキャンセルしない。
+- 閉じた Slot の `replace` は `false` を返し、operation を実行しない。
+- `cancelAndWaitForIdle()` は suspension 前に close と active task の cancel を行い、全所有 task を待つ。
+- `waitForIdle()` は置換済みの task と、受付が開いていれば待機中に受け付けた task も待つ。
+- 各 operation の TaskLocal に所有 marker の集合を置く。自己待機は Debug で assertion、
+  Release では継承した所有文脈に属する task の除外で扱う。
 
-## 根拠
+## 理由と制約
 
-単に `cancelAndWaitForIdle()` を追加しても、新規 admission を止めなければ method の suspension
-中に replace が入る。closed state と replace の guard を同じ actor に置くことで、teardown の
-有限性を利用側の二 actor protocol に依存せず保証できる。
+受付停止とキャンセルを同じ actor の suspension を含まない区間で行い、終了処理中の新規受付を防ぐ。
+`close()` と cancel を分けることで、自然完了を待つ drain も表現できる。
+再利用可能なキャンセルには `cancel()`、終端的な終了には `cancelAndWaitForIdle()` を使う。
 
-close が暗黙に cancel する案は graceful drain を失う。close 後に operation を開始して即 cancel
-する案は、拒否された work の副作用と観測ノイズを生む。TaskingCore は Action 語彙を持たないため、
-専用 outcome 型ではなく Bool で admission だけを返す。
+自己待機はプログラミング上の契約違反であり、通常の制御フローには使わない。
+構造化子 task も TaskLocal を継承するため検出対象になる。
+検出は任意の task 間の循環待機を解決せず、他の operation の終了も保証しない。
 
-自己待機を throws にすると既存呼び出しを壊し、完全な no-op にすると他の superseded task まで
-待たない。TaskLocal で現在の ownership context だけを除く形なら、通常時の意味論を変えずに
-誤用時も有限にできる。
-
-## 結果
-
-- close は冪等で再 open しない。close 後の slot を再利用する場合は新しい instance を作る。
-- structured child は TaskLocal を継承するため同じ自己待機保護を受ける。
-- `Task {}` も TaskLocal は継承するが cancellation ownership は継承しない。operation 内の
-  nested unstructured task は引き続きサポート外とする。
-- TaskLocal の ownership 集合は継承先で累積する。サポート外の operation 内 `replace` を
-  行うと、子 operation の自己待機除外には親 marker も含まれる。この過剰近似は契約違反の
-  経路に限られ、サポート対象の呼び出しには影響しない。
-- cancel を無視する operation の実終了は保証できない。強制停止は提供しない。
+待機する側のキャンセルは所有中の task に伝播せず、待機を中断しない。
+operation 内の並行処理には、キャンセルが伝播する `async let` / task group を使う。
+`Task {}` は TaskLocal をコピーしてもキャンセルの親子関係を作らないため、operation 内では使用しない。

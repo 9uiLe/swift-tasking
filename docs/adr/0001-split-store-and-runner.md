@@ -1,44 +1,25 @@
-# ADR-0001: task を所有する型と実行を制御する型を分離する
+# ADR-0001: task の所有と実行制御を分ける
 
-- ステータス: 実装済み(根拠はコードと README から復元 — 作者確認待ち)
-- 日付: 2026-07-03
+## 前提
 
-## 文脈
-
-「重複実行の制御」と「unstructured task のハンドル所有」は一緒に語られがちだが、
-必要になる場所が違う。同期 UI コールバックでは task を作らざるを得ないが、
-すでに async 文脈にいる場所(SwiftUI `.task` の中、task group の中)で新たに
-unstructured task を作ると、せっかくの構造化文脈(キャンセル伝播・エラー伝播)を
-自ら壊すことになる。
+同期 UI コールバックは非同期処理の終了を await できないため、コールバックの外まで生きる
+task の所有者が必要になる。async 関数では呼び出し元の task をそのまま使える。
+どちらの入口にも Action 単位の重複制御が必要になり得る。
 
 ## 決定
 
-2 つの型に分離する。
+- `ViewTaskStore` は task を作成・所有し、lifetime と重複方針を管理する。
+  同期の `start` は受付結果の `TaskStartOutcome` を返す。
+- `ActionRunner` は呼び出し元の task 内で operation を実行する。
+  重複を制御し、最終結果の `ActionOutcome<Success>` を返す。
+- 非 UI の task 所有は `TaskSlot` が担当する。[ADR-0010](0010-tasking-core-task-slot.md) を参照する。
 
-- **ViewTaskStore**: 同期コールバック専用。task を作り、ハンドルを所有し、
-  ライフタイムと重複ポリシーを管理する。結果は返さない。
-- **ActionRunner**: async 文脈専用。task を**作らない・所有しない・キャンセルしない**。
-  重複制御と型付きの最終結果(`ActionOutcome`)だけを提供する。
+## 理由と制約
 
-## 根拠
+Runner が task を作らなければ、呼び出し元のキャンセル状態と task-local 値を保って
+operation を実行できる。Runner に task をキャンセルする責務はなく、重複方針は
+`.ignoreNew` と `.allowConcurrent` に限る。
 
-- ActionRunner が task を作らないことで、呼び出し側の構造化文脈が保たれる。
-  周囲の task がキャンセルされれば `CancellationContext.check()` がそれを拾う。
-- この分離は API の非対称に現れている:
-  - ActionRunner の重複ポリシーに `cancelExisting` 相当が**ない**。
-    所有していない task はキャンセルできないから。
-  - ViewTaskStore は結果を返さない。同期コールバックは outcome を await
-    できないから(結果の伝達路は ViewModel state)。
-- 1 つの型に統合すると「task を作るときと作らないときがある store」になり、
-  キャンセル所有権がどこにあるか呼び出し箇所から読めなくなる。
-
-## 代償
-
-- 利用者は 2 つの型と使い分けを学ぶ必要がある(早見表を glossary に置いて緩和)。
-- 「ボタンから起動して outcome も欲しい」という要求には直接応えられない
-  (公式回答: outcome は ViewModel state で表現する)。
-
-## 未解決の問い
-
-- ActionRunner の実用シーンの代表例をもう 1 つ README に足せるか
-  (現状 billing.refresh のみ。`.task` 内での pull-to-refresh 重複制御など)。
+Store は所有中の task にキャンセルを要求できるため `.cancelExisting` も持つ。
+Store の開始結果は業務結果ではなく、完了した業務結果は ViewModel の状態に反映する。
+呼び出し箇所で task の所有者と結果の受け取り方を選択できる形にする。

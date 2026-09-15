@@ -35,13 +35,13 @@ jobs:
         run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test package
-        run: swift test
+        run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test package in release
-        run: swift test -c release
+        run: swift test -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test package with Thread Sanitizer
-        run: swift test --sanitize=thread
+        run: swift test --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       # swift build --triple + SDK 指定はツールチェーン間で挙動が揺れる
       # (Xcode 16.4: -Xswiftc -sdk が効かない / 26.5: SDKROOT export が
@@ -60,12 +60,12 @@ jobs:
 
       - name: Test prototype package
         working-directory: Examples/TaskingPrototype
-        run: swift test
+        run: swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test prototype package in release
         working-directory: Examples/TaskingPrototype
-        run: swift test -c release
+        run: swift test -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
       - name: Test prototype package with Thread Sanitizer
         working-directory: Examples/TaskingPrototype
-        run: swift test --sanitize=thread
+        run: swift test --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors

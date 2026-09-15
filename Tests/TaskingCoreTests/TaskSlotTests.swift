@@ -1,407 +1,197 @@
 import TaskingCore
-import XCTest
+import TaskingTestSupport
+import Testing
 
-final class TaskSlotTests: XCTestCase {
-    func testImmediateOperationFinishesBeforeWaitForIdleReturns() async {
+@Suite(.timeLimit(.minutes(1)))
+struct TaskSlotTests {
+    @Test func immediateWorkFinishesBeforeIdleReturns() async {
         let slot = TaskSlot()
-        let recorder = ValueRecorder()
+        let values = Values()
+        #expect(await slot.replace { _ in await values.append("finished") })
+        await slot.waitForIdle()
+        #expect(await values.items == ["finished"])
+    }
 
+    @Test func replacementCancelsOnlyOldWork() async {
+        let slot = TaskSlot()
+        let old = Gate()
+        let latest = Gate()
+        let values = Values()
+        await slot.replace { cancellation in
+            await old.wait()
+            #expect(cancellation.isCancelled)
+            await values.append("old")
+        }
+        await old.waitForArrivals()
+        await slot.replace { cancellation in
+            await latest.wait()
+            #expect(!cancellation.isCancelled)
+            await values.append("latest")
+        }
+        await latest.waitForArrivals()
+        await old.open()
+        await latest.open()
+        await slot.waitForIdle()
+        #expect(await Set(values.items) == ["old", "latest"])
+    }
+
+    @Test func completionOfSupersededWorkDoesNotLoseActiveCancellation() async {
+        let slot = TaskSlot()
+        let old = Gate()
+        let latest = Gate()
+        let oldFinished = Gate()
         await slot.replace { _ in
-            await recorder.append("completed")
+            await old.wait()
+            await oldFinished.open()
         }
+        await old.waitForArrivals()
+        await slot.replace { cancellation in
+            await latest.wait()
+            #expect(cancellation.isCancelled)
+        }
+        await latest.waitForArrivals()
+        await old.open()
+        await oldFinished.wait()
+        await slot.cancel()
+        await latest.open()
         await slot.waitForIdle()
-
-        let values = await recorder.values
-        XCTAssertEqual(values, ["completed"])
     }
 
-    func testReplaceCancelsPreviousOperationAndRunsLatest() async {
+    @Test func cancelKeepsAdmissionOpen() async {
         let slot = TaskSlot()
-        let firstGate = ManualGate()
-        let latestGate = ManualGate()
-        let recorder = ValueRecorder()
-
-        await slot.replace { cancellation in
-            await firstGate.wait()
-            guard !cancellation.isCancelled else {
-                return
-            }
-            await recorder.append("first")
-        }
-        await firstGate.waitUntilArrival()
-
-        await slot.replace { cancellation in
-            await latestGate.wait()
-            guard !cancellation.isCancelled else {
-                return
-            }
-            await recorder.append("latest")
-        }
-        await latestGate.waitUntilArrival()
-
-        await latestGate.open()
-        await firstGate.open()
-        await slot.waitForIdle()
-
-        let values = await recorder.values
-        XCTAssertEqual(values, ["latest"])
-    }
-
-    func testCancelPreventsTheOperationEffectAndWaitsForTermination() async {
-        let slot = TaskSlot()
-        let gate = ManualGate()
-        let recorder = ValueRecorder()
-
+        let gate = Gate()
         await slot.replace { cancellation in
             await gate.wait()
-            guard !cancellation.isCancelled else {
-                return
-            }
-            await recorder.append("completed")
+            #expect(cancellation.isCancelled)
         }
-        await gate.waitUntilArrival()
-
+        await gate.waitForArrivals()
         await slot.cancel()
+        let accepted = await slot.replace { cancellation in #expect(!cancellation.isCancelled) }
+        #expect(accepted)
         await gate.open()
         await slot.waitForIdle()
-
-        let values = await recorder.values
-        XCTAssertTrue(values.isEmpty)
     }
 
-    func testWaitForIdleDoesNotFinishUntilCancelledOperationTerminates() async {
+    @Test func closeIsTerminalIdempotentAndDoesNotCancelWork() async {
         let slot = TaskSlot()
-        let gate = ManualGate()
-        let probe = CompletionProbe()
-
-        await slot.replace { _ in
-            await gate.wait()
-        }
-        await gate.waitUntilArrival()
-        await slot.cancel()
-
-        async let waiter: Void = recordWhenSlotBecomesIdle(slot, probe: probe)
-        await probe.waitUntilStarted()
-        try? await Task.sleep(for: .milliseconds(10))
-        let completedBeforeTermination = await probe.isCompleted
-        XCTAssertFalse(completedBeforeTermination)
-
-        await gate.open()
-        await waiter
-        let completedAfterTermination = await probe.isCompleted
-        XCTAssertTrue(completedAfterTermination)
-    }
-
-    func testCloseRejectsReplacementWithoutRunningIt() async {
-        let slot = TaskSlot()
-        let recorder = ValueRecorder()
-
-        await slot.close()
-        let accepted = await slot.replace { _ in
-            await recorder.append("unexpected")
-        }
-
-        XCTAssertFalse(accepted)
-        await slot.waitForIdle()
-        let values = await recorder.values
-        XCTAssertTrue(values.isEmpty)
-    }
-
-    func testCloseIsIdempotentAndAllowsGracefulDrain() async {
-        let slot = TaskSlot()
-        let gate = ManualGate()
-        let recorder = ValueRecorder()
-
+        let gate = Gate()
         await slot.replace { cancellation in
             await gate.wait()
-            await recorder.append(cancellation.isCancelled ? "cancelled" : "finished")
+            #expect(!cancellation.isCancelled)
         }
-        await gate.waitUntilArrival()
-
+        await gate.waitForArrivals()
         await slot.close()
         await slot.close()
+        #expect(await !slot.replace { _ in Issue.record("Closed work executed.") })
         await gate.open()
-        await slot.waitForIdle()
-
-        let values = await recorder.values
-        XCTAssertEqual(values, ["finished"])
-        let accepted = await slot.replace { _ in }
-        XCTAssertFalse(accepted)
-    }
-
-    func testClosedIdleSlotAllowsRepeatedCancelAndWaitCalls() async {
-        let slot = TaskSlot()
-
-        await slot.close()
-        await slot.cancel()
         await slot.waitForIdle()
         await slot.cancelAndWaitForIdle()
-        await slot.cancel()
-        await slot.waitForIdle()
-
-        let accepted = await slot.replace { _ in }
-        XCTAssertFalse(accepted)
+        #expect(await !slot.replace { _ in Issue.record("Closed work executed.") })
     }
 
-    func testCancelAndWaitForIdleRejectsReplacementWhileSuspended() async {
+    @Test func teardownClosesAdmissionBeforeCancellationIsObserved() async {
         let slot = TaskSlot()
-        let started = Event()
-        let cancellationObserved = Event()
-        let terminationGate = ManualGate()
-        let recorder = ValueRecorder()
-
+        let cancelled = Gate()
+        let release = Gate()
+        let stream = AsyncStream<Void>.makeStream()
         await slot.replace { _ in
-            await started.signal()
-            do {
-                try await Task.sleep(for: .seconds(30))
-            } catch is CancellationError {
-                await cancellationObserved.signal()
-                await terminationGate.wait()
-            } catch {
-                XCTFail("Unexpected sleep error: \(error)")
+            await withTaskCancellationHandler {
+                for await _ in stream.stream {}
+                await cancelled.open()
+                await release.wait()
+            } onCancel: {
+                stream.continuation.finish()
             }
         }
-        await started.wait()
-
-        let closingTask = Task {
-            await slot.cancelAndWaitForIdle()
-        }
-        await cancellationObserved.wait()
-
-        let accepted = await slot.replace { _ in
-            await recorder.append("unexpected")
-        }
-        XCTAssertFalse(accepted)
-
-        await terminationGate.open()
-        await closingTask.value
+        let teardown = Task { await slot.cancelAndWaitForIdle() }
+        await cancelled.wait()
+        #expect(await !slot.replace { _ in Issue.record("Teardown admitted work.") })
+        await release.open()
+        await teardown.value
         await slot.cancelAndWaitForIdle()
-
-        let values = await recorder.values
-        XCTAssertTrue(values.isEmpty)
-        let acceptedAfterCompletion = await slot.replace { _ in }
-        XCTAssertFalse(acceptedAfterCompletion)
     }
 
-    func testWaitForIdleIncludesReplacementStartedWhileWaiting() async {
-        let slot = TaskSlot()
-        let firstGate = ManualGate()
-        let secondGate = ManualGate()
-        let waiterProbe = CompletionProbe()
+    @Test func idleWaitIncludesCancelledAndNewlyAdmittedWork() async {
+        await verifyIdleWait(on: TaskSlot())
+    }
 
-        await slot.replace { _ in
-            await firstGate.wait()
-        }
-        await firstGate.waitUntilArrival()
-
+    private func verifyIdleWait(on slot: isolated TaskSlot) async {
+        let old = Gate()
+        let latest = Gate()
+        let started = AsyncStream<Void>.makeStream()
+        var completed = false
+        slot.replace { _ in await old.wait() }
+        await old.waitForArrivals()
+        slot.cancel()
         let waiter = Task {
-            await recordWhenSlotBecomesIdle(slot, probe: waiterProbe)
+            started.continuation.yield(())
+            await slot.waitForIdle()
+            completed = true
         }
-        await waiterProbe.waitUntilStarted()
-
-        await slot.replace { _ in
-            await secondGate.wait()
-        }
-        await secondGate.waitUntilArrival()
-        await firstGate.open()
-        try? await Task.sleep(for: .milliseconds(10))
-        let completedBeforeReplacement = await waiterProbe.isCompleted
-        XCTAssertFalse(completedBeforeReplacement)
-
-        await secondGate.open()
+        var iterator = started.stream.makeAsyncIterator()
+        await iterator.next()
+        #expect(!completed)
+        slot.replace { _ in await latest.wait() }
+        await latest.waitForArrivals()
+        await old.open()
+        #expect(!completed)
+        await latest.open()
         await waiter.value
-        let completedAfterReplacement = await waiterProbe.isCompleted
-        XCTAssertTrue(completedAfterReplacement)
+        #expect(completed)
     }
 
-    func testDeinitCancelsOwnedTask() async {
-        let started = Event()
-        let cancellationObserved = Event()
+    @Test func deinitCancelsOwnedWork() async {
+        let gate = Gate()
+        let finished = Gate()
         var slot: TaskSlot? = TaskSlot()
         weak var weakSlot = slot
         defer { weakSlot = nil }
-
-        await slot?.replace { _ in
-            await started.signal()
-            do {
-                try await Task.sleep(for: .seconds(30))
-            } catch is CancellationError {
-                await cancellationObserved.signal()
-            } catch {
-                XCTFail("Unexpected sleep error: \(error)")
-            }
+        await slot?.replace { cancellation in
+            await gate.wait()
+            #expect(cancellation.isCancelled)
+            await finished.open()
         }
-        await started.wait()
-
+        await gate.waitForArrivals()
         slot = nil
-        await cancellationObserved.wait()
-
-        XCTAssertNil(weakSlot)
+        #expect(weakSlot == nil)
+        await gate.open()
+        await finished.wait()
     }
 
     #if !DEBUG
-    func testOwnedOperationWaitExcludesItselfButWaitsForOtherOwnedTasks() async {
+    @Test func selfWaitExcludesCurrentStructuredContext() async {
         let slot = TaskSlot()
-        let supersededGate = ManualGate()
-        let currentStarted = Event()
-        let currentReturned = Event()
-
-        await slot.replace { _ in
-            await supersededGate.wait()
-        }
-        await supersededGate.waitUntilArrival()
-
-        await slot.replace { _ in
-            await currentStarted.signal()
-            await slot.waitForIdle()
-            await currentReturned.signal()
-        }
-        await currentStarted.wait()
-        try? await Task.sleep(for: .milliseconds(10))
-        let returnedBeforeOtherTaskFinished = await currentReturned.isSignaled
-        XCTAssertFalse(returnedBeforeOtherTaskFinished)
-
-        await supersededGate.open()
-        await currentReturned.wait()
-        await slot.waitForIdle()
-    }
-
-    func testStructuredChildInheritsSelfWaitProtection() async {
-        let slot = TaskSlot()
-        let returned = Event()
-
         await slot.replace { _ in
             await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    await slot.waitForIdle()
-                }
+                group.addTask { await slot.waitForIdle() }
             }
-            await returned.signal()
         }
-
-        await returned.wait()
         await slot.waitForIdle()
     }
 
-    func testNestedUnstructuredTaskInheritsSelfWaitProtection() async {
+    @Test func selfWaitStillWaitsForSupersededWork() async {
         let slot = TaskSlot()
-        let returned = Event()
-
+        let old = Gate()
+        let started = Gate()
+        let values = Values()
         await slot.replace { _ in
-            let inner = Task {
-                await slot.waitForIdle()
-            }
-            await inner.value
-            await returned.signal()
+            await old.wait()
+            await values.append("old")
         }
-
-        await returned.wait()
+        await old.waitForArrivals()
+        await slot.replace { _ in
+            await started.open()
+            await slot.waitForIdle()
+            #expect(await values.items == ["old"])
+        }
+        await started.wait()
+        await old.open()
         await slot.waitForIdle()
     }
     #endif
 }
 
-private func recordWhenSlotBecomesIdle(_ slot: TaskSlot, probe: CompletionProbe) async {
-    await probe.markStarted()
-    await slot.waitForIdle()
-    await probe.markCompleted()
-}
-
-private actor ManualGate {
-    private var arrivals = 0
-    private var isOpen = false
-    private var arrivalContinuations: [CheckedContinuation<Void, Never>] = []
-    private var continuations: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        arrivals += 1
-        let waitingForArrival = arrivalContinuations
-        arrivalContinuations.removeAll()
-        for continuation in waitingForArrival {
-            continuation.resume()
-        }
-        guard !isOpen else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            continuations.append(continuation)
-        }
-    }
-
-    func waitUntilArrival() async {
-        guard arrivals == 0 else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            arrivalContinuations.append(continuation)
-        }
-    }
-
-    func open() {
-        isOpen = true
-        let waiting = continuations
-        continuations = []
-        for continuation in waiting {
-            continuation.resume()
-        }
-    }
-}
-
-private actor ValueRecorder {
-    private(set) var values: [String] = []
-
-    func append(_ value: String) {
-        values.append(value)
-    }
-}
-
-private actor Event {
-    private(set) var isSignaled = false
-    private var continuations: [CheckedContinuation<Void, Never>] = []
-
-    func signal() {
-        isSignaled = true
-        let waiting = continuations
-        continuations.removeAll()
-        for continuation in waiting {
-            continuation.resume()
-        }
-    }
-
-    func wait() async {
-        guard !isSignaled else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            continuations.append(continuation)
-        }
-    }
-}
-
-private actor CompletionProbe {
-    private var hasStarted = false
-    private(set) var isCompleted = false
-    private var startContinuations: [CheckedContinuation<Void, Never>] = []
-
-    func markStarted() {
-        hasStarted = true
-        let waiting = startContinuations
-        startContinuations.removeAll()
-        for continuation in waiting {
-            continuation.resume()
-        }
-    }
-
-    func waitUntilStarted() async {
-        guard !hasStarted else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            startContinuations.append(continuation)
-        }
-    }
-
-    func markCompleted() {
-        isCompleted = true
-    }
+private actor Values {
+    private(set) var items: [String] = []
+    func append(_ value: String) { items.append(value) }
 }

@@ -1,21 +1,18 @@
 import SwiftUI
 import Tasking
 
-/// ユースケース 4: 画面を閉じても完遂すべき同期処理(`.appBound`)。
-///
-/// docs/lifetimes.md の推奨どおり、store をアプリ寿命のコンテナに所有させる。
-/// 画面所有の store に `.appBound` と書いても実効性がない(宣言の実効上限 =
-/// store の所有スコープ)ため、所有位置がこのユースケースの本体である。
-/// ViewModel も同じコンテナが所有するため、再表示した画面は継続中の `.syncing`
-/// state を引き継げる。二重開始は `.ignoreNew` が防ぐ。
+/// Owns app-lifetime work and its display state independently of any screen.
 @MainActor
 public final class AppTaskContainer {
     public static let shared = AppTaskContainer()
 
-    public let store = ViewTaskStore()
-    public let syncViewModel = SyncViewModel()
+    public let store: ViewTaskStore
+    public let syncViewModel: SyncViewModel
 
-    private init() {}
+    public init(store: ViewTaskStore = ViewTaskStore(), syncViewModel: SyncViewModel = SyncViewModel()) {
+        self.store = store
+        self.syncViewModel = syncViewModel
+    }
 }
 
 enum SyncAction {
@@ -33,6 +30,7 @@ public final class SyncViewModel {
 
     public private(set) var syncState: SyncState = .idle
 
+    @ObservationIgnored private var latestSync = UUID()
     private let performSync: @MainActor @Sendable () async throws -> Void
 
     public init(
@@ -44,15 +42,20 @@ public final class SyncViewModel {
     }
 
     public func sync(cancellation: CancellationContext) async throws {
+        let sync = UUID()
+        latestSync = sync
         syncState = .syncing
         do {
             try cancellation.check()
             try await performSync()
+            try cancellation.check()
+            guard latestSync == sync else { return }
             syncState = .finished
         } catch let error as CancellationError {
-            syncState = .idle
+            if latestSync == sync { syncState = .idle }
             throw error
         } catch {
+            guard latestSync == sync else { return }
             syncState = .idle
         }
     }
@@ -60,11 +63,10 @@ public final class SyncViewModel {
 
 public struct SyncSettingsScreen: View {
     private let container: AppTaskContainer
-    @State private var viewModel: SyncViewModel
+    private var viewModel: SyncViewModel { container.syncViewModel }
 
     public init(container: AppTaskContainer = .shared) {
         self.container = container
-        _viewModel = State(initialValue: container.syncViewModel)
     }
 
     public var body: some View {

@@ -1,7 +1,9 @@
 import Tasking
 import Testing
+import TaskingTestSupport
 
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct ActionRunnerTests {
     @Test func runReturnsSucceededOutcome() async {
         let runner = ActionRunner()
@@ -22,9 +24,12 @@ struct ActionRunnerTests {
             ActionDescriptor(id: "sync"),
             onStart: { run in
                 startedRun = run
+                #expect(runner.isRunning(id: run.actionID))
+                #expect(runner.runningCount(for: run.actionID) == 1)
             },
             operation: { _ in
-                "done"
+                #expect(startedRun != nil)
+                return "done"
             }
         )
 
@@ -34,21 +39,25 @@ struct ActionRunnerTests {
 
     @Test func ignoreNewSkipsDuplicateWhileRunning() async {
         let runner = ActionRunner()
-        let gate = AsyncGate()
-        let starts = StartProbe()
+        let gate = Gate()
+        let started = Checkpoint()
 
         async let firstOutcome = runner.run(
             ActionDescriptor(id: "refresh"),
-            onStart: { _ in starts.record() }
+            onStart: { _ in started.reach() }
         ) { _ in
             await gate.wait()
             return "first"
         }
 
-        await starts.wait(untilCount: 1)
+        await started.wait()
 
-        let secondOutcome = await runner.run(ActionDescriptor(id: "refresh")) { _ in
-            "second"
+        let secondOutcome = await runner.run(
+            ActionDescriptor(id: "refresh"),
+            onStart: { _ in Issue.record("A skipped run must not report a start.") }
+        ) { _ in
+            Issue.record("A skipped operation must not execute.")
+            return "second"
         }
 
         #expect(secondOutcome == .skipped(.alreadyRunning))
@@ -60,33 +69,33 @@ struct ActionRunnerTests {
 
     @Test func allowsConcurrentRunsWhenRequested() async {
         let runner = ActionRunner()
-        let gate = AsyncGate()
-        let starts = StartProbe()
+        let firstGate = Gate()
+        let secondGate = Gate()
 
         async let firstOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent),
-            onStart: { _ in starts.record() }
+            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
         ) { _ in
-            await gate.wait()
+            await firstGate.wait()
             return "first"
         }
 
-        await starts.wait(untilCount: 1)
+        await firstGate.waitForArrivals()
 
         async let secondOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent),
-            onStart: { _ in starts.record() }
+            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
         ) { _ in
-            await gate.wait()
+            await secondGate.wait()
             return "second"
         }
 
-        await starts.wait(untilCount: 2)
+        await secondGate.waitForArrivals()
         #expect(runner.runningCount(for: "refresh") == 2)
 
-        await gate.open()
-        #expect(await firstOutcome == .succeeded("first"))
+        await secondGate.open()
         #expect(await secondOutcome == .succeeded("second"))
+        #expect(runner.runningCount(for: "refresh") == 1)
+        await firstGate.open()
+        #expect(await firstOutcome == .succeeded("first"))
         #expect(!runner.isRunning(id: "refresh"))
     }
 
@@ -134,6 +143,44 @@ struct ActionRunnerTests {
         #expect(outcome == .cancelled)
     }
 
+    @Test func recursiveSameActionSkipsButDifferentActionRuns() async {
+        let runner = ActionRunner()
+        let outcome = await runner.run(ActionDescriptor(id: "outer")) { _ in
+            let duplicate = await runner.run(ActionDescriptor(id: "outer")) { _ in 1 }
+            #expect(duplicate == .skipped(.alreadyRunning))
+            let inner = await runner.run(ActionDescriptor(id: "inner")) { _ in 2 }
+            #expect(inner == .succeeded(2))
+            #expect(runner.isRunning(id: "outer"))
+            return 3
+        }
+        #expect(outcome == .succeeded(3))
+        #expect(!runner.isRunning(id: "outer"))
+    }
+
+    @Test(arguments: [false, true])
+    func terminalErrorsReleaseDuplicateAdmission(cancelled: Bool) async {
+        let runner = ActionRunner()
+        let _: ActionOutcome<Int> = await runner.run(ActionDescriptor(id: "work")) { _ in
+            if cancelled { throw CancellationError() }
+            throw SampleError.offline
+        }
+        #expect(runner.runningCount(for: "work") == 0)
+        let next = await runner.run(ActionDescriptor(id: "work")) { _ in 42 }
+        #expect(next == .succeeded(42))
+    }
+
+    @Test func cancellationIsCooperativeAndDoesNotRewriteASuccessfulReturn() async {
+        let runner = ActionRunner()
+        let task = Task {
+            await runner.run(ActionDescriptor(id: "work")) { c in
+                #expect(c.isCancelled)
+                return "intentional result"
+            }
+        }
+        task.cancel()
+        #expect(await task.value == .succeeded("intentional result"))
+    }
+
     @available(*, deprecated)
     @Test func rejectWhileRunningRemainsACompatibilityAlias() {
         let legacy: ActionDuplicatePolicy = .rejectWhileRunning
@@ -147,58 +194,5 @@ private enum SampleError: Error, CustomStringConvertible {
 
     var description: String {
         "offline"
-    }
-}
-
-private actor AsyncGate {
-    private var continuations: [CheckedContinuation<Void, Never>] = []
-    private var isOpen = false
-
-    func wait() async {
-        if isOpen {
-            return
-        }
-
-        await withCheckedContinuation { continuation in
-            continuations.append(continuation)
-        }
-    }
-
-    func open() {
-        isOpen = true
-        let continuations = continuations
-        self.continuations.removeAll()
-        for continuation in continuations {
-            continuation.resume()
-        }
-    }
-}
-
-@MainActor
-private final class StartProbe {
-    private var count = 0
-    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
-
-    func record() {
-        count += 1
-
-        var remaining: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
-        for waiter in waiters {
-            if count >= waiter.target {
-                waiter.continuation.resume()
-            } else {
-                remaining.append(waiter)
-            }
-        }
-        waiters = remaining
-    }
-
-    func wait(untilCount target: Int) async {
-        guard count < target else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            waiters.append((target, continuation))
-        }
     }
 }

@@ -1,44 +1,30 @@
-# ADR-0002: CancellationContext は能力ではなく契約の可視化である
+# ADR-0002: CancellationContext で協調の契約を明示する
 
-- ステータス: 実装済み(根拠はコードと README から復元 — 作者確認待ち)
-- 日付: 2026-07-03
+## 前提
 
-## 文脈
-
-Swift のキャンセルは協調的で、`Task.isCancelled` / `Task.checkCancellation()` は
-どこからでも呼べる ambient な状態である。つまり機能面では、ViewModel メソッドに
-何も渡さなくてもキャンセル協調は書ける。問題は「このメソッドはキャンセルに
-協調する責任を負っているか」が**シグネチャから読めない**ことにある。
-協調しない長時間処理は、`cancel()` を呼んでも止まらない。
+Swift のキャンセルは協調的である。要求を受けた task が終了するには、operation が
+キャンセルを確認するか、キャンセルに反応する API を呼ぶ必要がある。
+この責任を、メソッドの引数から読めるようにする。
 
 ## 決定
 
-`CancellationContext` という空に近い struct を導入し、`ViewTaskStore.start` /
-`ActionRunner.run` の operation に必ず渡す。中身は `Task.isCancelled` と
-`Task.checkCancellation()` の転送のみ。
+`CancellationContext` は `Task.isCancelled` と `Task.checkCancellation()` を公開する
+`Sendable` な値型とする。Store・Runner・Slot は operation にこの値を渡す。
+利用側の ViewModel / service メソッドも必要な箇所で受け取る。
 
-## 根拠
+`init()` は公開する。SwiftUI `.task` など、Tasking が task を作らない入口でも
+`CancellationContext()` を明示的に渡せる。
 
-- 値を受け取ったメソッドのシグネチャ(`func save(cancellation: CancellationContext)`)
-  が「この処理は長く、キャンセルに協調すべきである」という契約の宣言になる。
-  レビューで「cancellation を受けているのに一度も check() していない」を指摘できる。
-- ambient な `Task.checkCancellation()` 直呼びに比べ、「どの task の
-  キャンセル状態か」を呼び出し経路が保証する(store が渡した文脈 = store が
-  所有する task)。
-- capability token 化(構築を private にして偽造を防ぐ)はしない。
-  強制よりも語彙の提供を優先する(ライブラリの原則「可視化はするが、
-  肩代わりはしない」)。
+## 理由と制約
 
-## 代償
+`func save(cancellation: CancellationContext)` は、保存処理がキャンセルに協調する
+契約を表す。実装では長い処理の前後や重要な suspension の後で確認する。
+引数を受け取るだけではキャンセル対応は完了せず、確認箇所はレビューとテストで検証する。
 
-- 契約の実効性はチーム規律に依存する。`CancellationContext()` は誰でも作れるため、
-  型システムによる強制はない。
-- 「何もしないラッパーはノイズ」という批判は正当であり、採用判断の分かれ目になる。
-  reviewability に価値を置かないチームには向かない。
+この値は task の識別子やキャンセルトークンを保存しない。毎回、**現在実行している task** の
+状態を読む。値を別の `Task {}` に渡しても、元の task のキャンセルは伝播しない。
+operation 内での並行処理には構造化子 task を使う。
 
-## 未解決の問い
-
-- 将来 deadline・進捗通知などをこの struct に載せる構想はあるか。あるなら
-  「拡張点の予約」という追加の存在理由になる(docs に明記する価値がある)。
-- init を非公開にして偽造不能にする選択肢を捨てた理由を作者の言葉で確認したい
-  (テスト容易性のためか、強制を避ける思想ゆえか)。
+throwing なメソッドは `check()`、non-throwing なメソッドは `isCancelled` で終了を判断できる。
+どちらも loading や途中状態の後始末を行う。optional な context による検査漏れを避けるため、
+キャンセル協調を契約にするメソッドは non-optional な引数を受け取る。

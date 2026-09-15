@@ -1,114 +1,103 @@
-# ライフタイムの推奨構成 — store をどこに所有させるか
+# ライフタイムと所有構成
 
-> ADR-0004 の帰結: `ActionLifetime` は宣言であって強制ではない。
-> したがって **宣言の実効上限 = store を所有しているオブジェクトの寿命** である。
-> このドキュメントは各 lifetime に対する store の推奨所有位置を示す。
+`ActionLifetime` は、どの run を一括で照会・キャンセルするかを決めるラベルである。
+処理を継続したい期間に合わせて Store の所有者を配置し、その期間の終わりにキャンセルを要求する。
+ラベルを指定するだけでは、画面イベントや OS のバックグラウンド実行には接続されない。
 
-## 黄金律
+## 配置の原則
 
-1. **store は所有スコープごとに 1 つ**作る(画面ごと・シーンごと・アプリに 1 つ)。
-2. **task の lifetime 宣言は、その store の所有スコープ以下のときだけ実効性がある**。
-   画面所有の store に `.appBound` と書いても、task は画面と共に(`deinit` で)
-   キャンセルされる。
-3. 複数の画面が**共有 store に同じ lifetime タグ**を入れると、
-   `cancel(lifetime:)` が他画面の task まで巻き込む。共有 store では
-   機能固有のカスタムタグ(`"accountSettings"` など)か `ActionRun` 単位の
-   キャンセルを使う。
-
-| 宣言 | store の推奨所有位置 | 解放・キャンセルの実際 |
+| ラベル | Store の所有者 | 利用側が接続するイベントの例 |
 |---|---|---|
-| `.screenBound` | 画面 view の `@State` | view の identity 消滅 → store `deinit` が全 task をキャンセル。明示配線で早めることも可(下記) |
-| `.sceneBound` | シーン(`WindowGroup` 等)のルート view の `@State` | シーン破棄と共にキャンセル |
-| `.appBound` | アプリ寿命のコンテナ(下記例) | プロセス生存中は生存。`ScenePhase` 等での明示キャンセルは利用者判断 |
-| カスタム(`"accountSettings"` 等) | 上記いずれかの共有 store 内の一括キャンセル単位 | `cancel(lifetime: "accountSettings")` |
+| `.screenBound` | 画面の View または画面のコンテナ | `onDisappear` で対象を cancel |
+| `.sceneBound` | シーンごとのルート View またはコンテナ | シーンの終了方針に応じて cancel / close |
+| `.appBound` | アプリ全体のコンテナ | ログアウトやアプリ側のサービス終了で cancel / close |
+| カスタムラベル | 同じ所有者の中の処理群 | その機能の終了イベントで cancel |
 
-`.appBound` は background execution の保証ではない。アプリが suspend されれば task も
-進行できない。background での完遂が必要な処理は `beginBackgroundTask`、
-`BGTaskScheduler` / `BGProcessingTask`、background `URLSession` など、
-用途に合う OS API をアプリ側で使う。Tasking はそれらの代替ではなく、Action の
-所有位置と方針を見えるようにするだけである。
+Store は解放時に所有中の全 task にキャンセルを要求する。ただし解放時点は参照関係で決まり、
+キャンセル要求後も operation が終了するまで処理は続き得る。
+表示終了とキャンセル要求を対応させたい場合は、ライフサイクルイベントで明示的に呼び出す。
 
-## screenBound — 画面所有(基本形)
+Store を共有する場合は、同じラベルへの `cancel(lifetime:)` が全該当 run に及ぶ。
+画面単位でキャンセルしたい処理は Store を分けるか、機能固有のラベルや `ActionRun` で選択する。
+
+## 画面で所有する
+
+次の断片では、`viewModel.save(cancellation:)` が業務エラーを表示状態に変換し、
+キャンセル時の後始末を行う。ViewModel の実装は [利用レシピ](recipes.md) を参照する。
+SwiftUI の例で使う型は `@MainActor` とする。
 
 ```swift
+@MainActor
 struct EditorView: View {
-    @State private var taskStore = ViewTaskStore() // 画面と同じ寿命
+    @State private var taskStore = ViewTaskStore()
+    let viewModel: SettingsViewModel
 
     var body: some View {
         Button("Save") {
-            taskStore.start(id: .editorSave, lifetime: .screenBound) { cancellation in
-                // ...
+            taskStore.start(id: EditorActions.save, lifetime: .screenBound) { cancellation in
+                try await viewModel.save(cancellation: cancellation)
             }
         }
-        // 任意: deinit を待たず、非表示になった時点で確実に止めたい場合の明示配線
         .onDisappear {
             taskStore.cancel(lifetime: .screenBound)
         }
     }
 }
 
-extension ActionID {
-    static let editorSave = ActionID("editor.save")
+private enum EditorActions {
+    static let save: ActionID = "editor.save"
 }
 ```
 
-`@State` 所有の store は view の identity が消えた時点で `deinit` が走り、
-全 task がキャンセルされる。`onDisappear` の配線は「非表示 = 即キャンセル」を
-明示したい場合の追加であり、安全網は `deinit` が担う。
+再表示時に同じ Store を使うため、ここでは受付を開いたまま cancel する。
+`close()` は終端的な操作であり、一度閉じた Store では start を受け付けない。
 
-## appBound — アプリ寿命のコンテナ所有
+## シーンで所有する
 
-「画面を閉じても完遂すべき処理」(設定の同期、送信キューのフラッシュ等)は、
-**store 自体をアプリ寿命のオブジェクトに所有させる**。
+`WindowGroup` 内のルート View に Store を置くと、ウィンドウごとに異なる所有者を持てる。
+子画面にはその Store または同期の操作ハンドラを渡す。
 
 ```swift
 @MainActor
-final class AppTaskContainer {
-    static let shared = AppTaskContainer()
-    let store = ViewTaskStore() // アプリと同じ寿命
-}
+struct SceneRoot: View {
+    @State private var taskStore = ViewTaskStore()
 
-struct SettingsView: View {
     var body: some View {
-        Button("Sync") {
-            AppTaskContainer.shared.store.start(
-                id: .settingsSync,
-                lifetime: .appBound
-            ) { cancellation in
-                // 画面が閉じてもこの task は生き続ける
-            }
-        }
+        SceneContent(taskStore: taskStore)
     }
-}
-
-extension ActionID {
-    static let settingsSync = ActionID("settings.sync")
 }
 ```
 
-composition root からアプリ寿命の一度きり準備処理を起動する場合も、同じ store を使う。
-`onChange` は同期コールバックなので、`.task` ではなく `ViewTaskStore` に渡す出番である。
-`.ignoreNew` は多重起動を防ぐ。
+`SceneContent` はアプリ側の View であり、必要な処理を `.sceneBound` で開始する。
+シーンの inactive 化でキャンセルするかは処理ごとに決める。システムダイアログや
+一時的なフォーカス喪失も inactive を起こすため、inactive とシーンの終了を同一視しない。
 
-task の進捗を画面に表示する ViewModel も、task と同じ app-lifetime container に所有させる。
-store だけが長生きして ViewModel が画面ごとに作り直されると、画面へ戻ったときに進行中の
-task と表示 state が食い違う。
+## アプリで所有する
+
+画面を閉じても継続する同期処理は、Store と表示用の ViewModel をアプリ寿命の
+コンテナに配置する。Store だけが長生きし、ViewModel を画面ごとに作り直す構成では、
+画面へ戻ったときに進行中の処理と表示状態が食い違う。
+
+コンテナは `App` の `@State` などで保持し、必要な画面へ渡す。
+次は iOS 17 / macOS 14 以降の `onChange(of:initial:)` を使う例である。
+`RootView` はアプリ側の View、`prepareServices()` はエラーを内部処理する準備操作を表す。
 
 ```swift
 @main
+@MainActor
 struct MyApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var appTaskStore = ViewTaskStore()
-    @State private var bootstrapped = false
+    @State private var taskStore = ViewTaskStore()
+    @State private var didRequestPreparation = false
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .onChange(of: scenePhase, initial: true) { _, phase in
-                    guard phase == .active, !bootstrapped else { return }
-                    bootstrapped = true
-                    appTaskStore.start(
-                        id: AppActions.bootstrap,
+                    guard phase == .active, !didRequestPreparation else { return }
+                    didRequestPreparation = true
+                    taskStore.start(
+                        id: AppActions.prepare,
                         lifetime: .appBound,
                         policy: .ignoreNew
                     ) { _ in
@@ -117,44 +106,29 @@ struct MyApp: App {
                 }
         }
     }
-
-    private func prepareServices() async {
-        // 広告 SDK や analytics の一度きり準備
-    }
 }
 
 private enum AppActions {
-    static let bootstrap: ActionID = "app.bootstrap"
+    static let prepare: ActionID = "app.prepare"
 }
 ```
 
-上の bootstrap 例のように `App` 構造体の `@State` で所有すれば、シングルトンを使わずに
-同じ寿命が得られる。ルート view へのイニシャライザ注入でもよい。
-要点は「何が store を所有しているか」であって、注入手段ではない。
+`didRequestPreparation` はアプリ寿命で1度だけ要求する方針を表す。
+`.ignoreNew` 単独は追跡中の重複を拒否するだけで、完了後の再要求は受け付ける。
+失敗後に再試行したい処理では、準備状態と再試行条件をアプリ側で管理する。
 
-## sceneBound — シーンのルート view 所有
+システムダイアログを出す準備処理は、表示によって `scenePhase` が変わることがある。
+`.task(id: scenePhase)` に処理を結び付けると、その変化で自分の処理がキャンセルされ得る。
+シーンの状態変化と独立して継続したい場合は、上のようにアプリ側の Store が所有する。
 
-```swift
-@main
-struct MyApp: App {
-    var body: some Scene {
-        WindowGroup {
-            RootView() // RootView の @State が store を所有 = シーン寿命
-        }
-    }
-}
-```
+## 所有者を終了する
 
-マルチウィンドウ(iPad / macOS / visionOS)ではシーンごとにルート view の
-identity が分かれるため、store も自然にシーン単位になる。
+- 再利用する所有者: 必要な対象を `cancel` する。
+- 受け付け済みの work を自然完了させる: `close()` → `waitForIdle()`。
+- 受付停止してキャンセルを要求し、終了を確認する: `cancelAndWaitForIdle()`。
 
-## アンチパターン
+operation が Store 自身やその所有者を強参照すると、解放によるキャンセルを妨げる。
+[利用レシピ](recipes.md) の参照関係と世代管理を確認する。
 
-- **画面所有の store に `.appBound`** — 宣言はレビュー上「アプリ寿命の意図」を
-  主張するのに、実際は画面と共に死ぬ。意図があるなら store の所有位置を変える。
-- **`.appBound` を background 実行保証として扱う** — store がアプリ寿命でも
-  OS の background 制限は超えられない。background 完遂が必要なら OS の
-  background API を使う。
-- **アプリ所有の共有 store に複数画面が `.screenBound` を入れる** —
-  `cancel(lifetime: .screenBound)` が全画面分を巻き込む。共有 store では
-  機能固有のカスタムタグを使う。
+`.appBound` は background execution の保証ではない。アプリが suspend されると task も進行できず、
+プロセス終了時の完遂も保証しない。必要な処理には OS の background task や転送 API を組み合わせる。

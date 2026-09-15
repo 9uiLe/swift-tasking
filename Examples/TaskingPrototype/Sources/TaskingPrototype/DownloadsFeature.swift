@@ -1,14 +1,7 @@
 import SwiftUI
 import Tasking
 
-/// ユースケース 3: アイテムごとの並行ダウンロードと個別キャンセル。
-///
-/// 「エンティティ単位のアクション」のモデリングは 2 通りある:
-/// (a) 動的 ActionID(`download.item.<id>`)+ `.ignoreNew` — 本実装
-/// (b) 共有 ActionID + `.allowConcurrent` + `ActionRun` ハンドル保持
-/// (a) は「同一アイテムの重複ダウンロード禁止」を ID 空間で表現でき、
-/// 行単位のキャンセルも `cancel(id:)` で済む。docs にはこの指針がまだない
-/// (レビュー所見 F3 参照)。
+/// Per-item Action IDs independently control download admission and cancellation.
 enum DownloadAction {
     static func item(_ itemID: String) -> ActionID {
         ActionID("download.item.\(itemID)")
@@ -27,6 +20,7 @@ public final class DownloadsViewModel {
     public let items: [String]
     public private(set) var states: [String: ItemState] = [:]
 
+    @ObservationIgnored private var latestDownloads: [String: UUID] = [:]
     private let performDownload: @MainActor @Sendable (String) async throws -> Void
 
     public init(
@@ -44,16 +38,23 @@ public final class DownloadsViewModel {
     }
 
     public func download(itemID: String, cancellation: CancellationContext) async throws {
+        let download = UUID()
+        latestDownloads[itemID] = download
+        defer {
+            if latestDownloads[itemID] == download { latestDownloads[itemID] = nil }
+        }
         states[itemID] = .downloading
         do {
             try cancellation.check()
             try await performDownload(itemID)
             try cancellation.check()
+            guard latestDownloads[itemID] == download else { return }
             states[itemID] = .done
         } catch let error as CancellationError {
-            states[itemID] = .idle
+            if latestDownloads[itemID] == download { states[itemID] = .idle }
             throw error
         } catch {
+            guard latestDownloads[itemID] == download else { return }
             states[itemID] = .idle
         }
     }
@@ -61,10 +62,10 @@ public final class DownloadsViewModel {
 
 public struct DownloadsScreen: View {
     @State private var taskStore = ViewTaskStore()
-    @State private var viewModel: DownloadsViewModel
+    private let viewModel: DownloadsViewModel
 
-    public init(viewModel: DownloadsViewModel = DownloadsViewModel()) {
-        _viewModel = State(initialValue: viewModel)
+    public init(viewModel: DownloadsViewModel) {
+        self.viewModel = viewModel
     }
 
     public var body: some View {
