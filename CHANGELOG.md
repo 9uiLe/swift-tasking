@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
 ### 追加
 
 - 所有者の認証によるリリースコマンドを追加。バージョン付き文書の準備、ソースコミットと CI の検証、
@@ -51,5 +53,6 @@
 - `ActionDuplicatePolicy.rejectWhileRunning` は `.ignoreNew` の非推奨エイリアス。
   値の構築と網羅的な switch には `.ignoreNew` を使う。静的なエイリアスは enum の網羅性検査に参加しない。
 
-[Unreleased]: https://github.com/9uiLe/swift-tasking/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/9uiLe/swift-tasking/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/9uiLe/swift-tasking/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/9uiLe/swift-tasking/releases/tag/0.3.0
