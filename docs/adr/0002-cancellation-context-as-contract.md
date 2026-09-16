@@ -1,30 +1,26 @@
-# ADR-0002: CancellationContext で協調の契約を明示する
+# ADR-0002: キャンセルへの協調を引数で明示する
 
 ## 前提
 
-Swift のキャンセルは協調的である。要求を受けた task が終了するには、operation が
-キャンセルを確認するか、キャンセルに反応する API を呼ぶ必要がある。
-この責任を、メソッドの引数から読めるようにする。
+Swift のキャンセル要求はタスクを強制停止しない。
+処理本体が状態を確認するか、キャンセルに反応する API を使い、終了と後処理を行う必要がある。
+この責任をメソッドの呼び出しから読み取れる形にする。
 
 ## 決定
 
-`CancellationContext` は `Task.isCancelled` と `Task.checkCancellation()` を公開する
-`Sendable` な値型とする。Store・Runner・Slot は operation にこの値を渡す。
-利用側の ViewModel / service メソッドも必要な箇所で受け取る。
+`CancellationContext` を `Sendable` な値型とし、`isCancelled` と `check()` で
+現在実行中のタスクのキャンセル状態を公開する。
+Store・Runner・Slot は処理本体へこの値を渡す。
+協調キャンセルを契約とする ViewModel やサービスのメソッドは、必須の引数として受け取る。
 
-`init()` は公開する。SwiftUI `.task` など、Tasking が task を作らない入口でも
-`CancellationContext()` を明示的に渡せる。
+初期化子を公開し、SwiftUI `.task` などの入口でも `CancellationContext()` を渡せるようにする。
 
 ## 理由と制約
 
-`func save(cancellation: CancellationContext)` は、保存処理がキャンセルに協調する
-契約を表す。実装では長い処理の前後や重要な suspension の後で確認する。
-引数を受け取るだけではキャンセル対応は完了せず、確認箇所はレビューとテストで検証する。
+`save(cancellation:)` という形で、保存処理のキャンセル責任を呼び出し側と共有できる。
+エラーを投げるメソッドは `check()`、投げないメソッドは `isCancelled` を使い、
+長い処理や重要な中断点の前後で終了を判断する。途中の表示状態の後処理も利用側が行う。
 
-この値は task の識別子やキャンセルトークンを保存しない。毎回、**現在実行している task** の
-状態を読む。値を別の `Task {}` に渡しても、元の task のキャンセルは伝播しない。
-operation 内での並行処理には構造化子 task を使う。
-
-throwing なメソッドは `check()`、non-throwing なメソッドは `isCancelled` で終了を判断できる。
-どちらも loading や途中状態の後始末を行う。optional な context による検査漏れを避けるため、
-キャンセル協調を契約にするメソッドは non-optional な引数を受け取る。
+値は作成元のタスクやキャンセルトークンを記憶しない。
+別の非構造化 `Task` に渡しても親からキャンセルは伝播しないため、処理内の並行実行には構造化子タスクを使う。
+引数の存在だけでは協調を保証できず、確認箇所と後処理をテストする必要がある。

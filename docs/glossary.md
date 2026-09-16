@@ -1,104 +1,110 @@
 # 用語集
 
-コード・設計資料・レビューで共有する語彙を定義する。
-利用場面から型を選ぶ場合は [用途と設計原則](positioning.md) を参照する。
+Tasking のコード・文書・テストで使う用語を定義する。
+本文では `ViewTaskStore` を Store、`ActionRunner` を Runner、`TaskSlot` を Slot と略記する。
 
 ## 処理と識別子
 
-| 用語 | 定義 |
+| 用語 | 意味 |
 |---|---|
-| task | Swift Concurrency の実行単位。`Task {}` が作る task は unstructured task である |
-| operation | Store / Runner / Slot に渡す、実際の処理を記述した async closure |
-| Action | 保存・更新・同期など、アプリにとって意味のある処理の種類 |
-| `ActionID` | Action の安定した識別子。例: `"settings.save"`。同じ Store / Runner 内の重複判定単位 |
-| `ActionRunID` | 1回の実行を識別する UUID ベースの値 |
-| `ActionRun` | ActionID と ActionRunID の組で表す、1回の具体的な実行 |
-| `ActionDescriptor` | Runner に渡す ActionID と重複方針の組 |
+| タスク（task） | Swift Concurrency の実行単位。`Task {}` は非構造化タスクを作る |
+| 処理本体（operation） | Store・Runner・Slot に渡す async クロージャ |
+| Action | 保存・更新・同期など、アプリケーションにとって意味のある処理の種類 |
+| `ActionID` | Action の種類を表す安定した識別子。例: `"settings.save"` |
+| 実行（run） | Action を1回呼び出したもの。同じ Action の実行は複数存在できる |
+| `ActionRunID` | 1回の実行を識別する UUID に基づく値 |
+| `ActionRun` | `ActionID` と `ActionRunID` の組。個別の実行の照会・キャンセル・終了待ちに使う |
+| `ActionDescriptor` | Runner に渡す `ActionID` と重複方針の組 |
 
-同じ ActionID の複数の run は並行し得る。具体的な run の照会・キャンセル・終了待ちには
-ActionID と ActionRunID の両方が一致する `ActionRun` を使う。
+ActionID による重複判定は、同じ Store または Runner の中で行う。
+個別の実行を指定する操作では、ActionID と ActionRunID の両方が一致する必要がある。
 
-## 追跡・所有・終了
+## 受付・追跡・所有
+
+### 受付（admission）
+
+新しい処理の開始を受理すること。Store の `start` と Slot の `replace` が入口となる。
+`close()` は受付を恒久的に閉じ、受け付け済みの処理をそのまま継続させる。
+繰り返し閉じても結果は変わらず、再開には新しいインスタンスを使う。
 
 ### 追跡（tracking）
 
-Action を重複判定と照会の対象として登録すること。
-`isRunning` / `runningCount` は、その呼び出し時点の追跡状態を返す。
-Store は cancel 時に追跡を即座に解除する。Runner は run の最終結果が決まるまで追跡する。
-追跡状態は SwiftUI の再描画を駆動する観測可能な状態ではない。
+実行を重複判定と照会の対象として登録すること。
+Store はキャンセル要求または処理の終了時に、Runner は終了結果を返す際に追跡を解除する。
+`isRunning` と `runningCount` は、呼び出した時点の追跡状態を返す。
 
 ### 所有（ownership）
 
-unstructured task のハンドルを保持し、キャンセル要求と終了確認の責任を持つこと。
-Store / Slot は作成した task を終了まで所有する。キャンセルや置換だけでは所有を解除しない。
-Runner は呼び出し元の task を使い、その task を所有しない。
+タスクのハンドルを保持し、キャンセル要求と終了確認に責任を持つこと。
+Store と Slot は作成したタスクを終了まで所有する。キャンセルや差し替えだけでは所有を解除しない。
+Runner は呼び出し元のタスクを使い、そのタスクを所有しない。
+
+### アクティブなタスク（active task）
+
+Slot が次の `replace` または `cancel` の対象にする、最大1つのタスク。
+差し替えやキャンセルでアクティブでなくなったタスクも、終了までは所有される。
 
 ### 実終了（termination）
 
-operation と、その task 内の後始末が終わること。
-キャンセル要求は実終了を保証せず、追跡から外れた operation も実行を続け得る。
-Store の `awaitCompletion(of:)` は1 run、Store / Slot の `waitForIdle()` は所有中の全 task を待つ。
-
-### active task
-
-Slot が次の `replace` / `cancel` の対象にする最大1つの task。
-active でなくなった task も、終了するまでは所有中である。
-
-### 受付（admission）と close
-
-受付は、新しい start / replace を受理すること。`close()` は受付を恒久的に停止する。
-close は冪等であり、所有中の task はキャンセルしない。
-`cancelAndWaitForIdle()` は受付停止とキャンセルを最初の suspension より前に行う。
+処理本体と、そのタスク内の後処理が終わること。
+キャンセル要求や追跡解除から実終了までは、処理が続く場合がある。
+Store の `awaitCompletion(of:)` は指定した実行、Store と Slot の `waitForIdle()` は所有するタスクの終了を待つ。
 
 ## 寿命とキャンセル
 
-### `ActionLifetime`
+### 寿命ラベル（`ActionLifetime`）
 
-Store における論理的な寿命のラベル。`.screenBound` / `.sceneBound` / `.appBound` と
-任意の文字列を使える。照会と一括キャンセルの選択に使い、Store の寿命や OS の実行権限を変えない。
-ライフサイクルへの接続と Store の配置は利用側が行う。
+Store 内の実行を、照会や一括キャンセルの対象として選ぶための値。
+`.screenBound`・`.sceneBound`・`.appBound` と任意の文字列を使える。
+ラベルに対応する所有者の配置とライフサイクルイベントへの接続は、アプリケーションが行う。
 
-### 協調的キャンセル
+### 協調キャンセル
 
-キャンセル要求を受けた operation 自身が終了に協力する方式。
-Swift の `cancel()` はキャンセル状態を設定し、キャンセルハンドラを呼ぶ。
-operation の強制停止や副作用の巻き戻しは行わない。
+要求を受けた処理自身が、キャンセル状態の確認や対応する API を通じて終了に協力する方式。
+Swift の `Task.cancel()` はキャンセル状態を設定し、登録されたキャンセルハンドラを呼ぶ。
+処理の強制停止や副作用の巻き戻しは行わない。
 
-### `CancellationContext`
+### キャンセルの契約（`CancellationContext`）
 
-キャンセルに協調する契約を引数として表す値。
-`isCancelled` / `check()` は、アクセスした時点で実行中の task のキャンセル状態を読む。
-元の task の状態を保存するトークンではなく、別の unstructured task へキャンセルを伝播しない。
+処理がキャンセルに協調する責任を、引数として明示する値。
+`isCancelled` と `check()` は、アクセスした時点で実行中のタスクの状態を読む。
+値の作成元のタスクを記憶せず、別の非構造化タスクへのキャンセル伝播も行わない。
 
 ### 所有文脈（ownership context）
 
-内部の TaskLocal に保持する `TaskOwnership` marker の集合。
-構造化子 task へも継承され、自分の終了を待つ誤用の検出に使う。
-キャンセル状態とは別の情報であり、任意の task 間の依存関係を表すものではない。
+自己待機を検出するため、内部の TaskLocal に保持する所有識別子の集合。
+各識別子は `TaskOwnership` のインスタンスで、構造化子タスクにも継承される。
+キャンセル状態や、任意のタスク間の依存関係を表す値ではない。
+
+### 世代ガード
+
+どの実行の結果や後処理を状態へ反映するかを、利用側の識別子で判定すること。
+新しい検索が始まった後に古い検索が完了しても、表示を上書きしないために使う。
+キャンセル要求とは独立した、アプリケーションの状態更新規則である。
 
 ## 重複方針
 
-| 型 | 値 | 同じ ActionID の追跡中 run があるときの動作 |
+| 型 | 値 | 同じ ActionID の実行を追跡中の場合 |
 |---|---|---|
-| `TaskStartPolicy` | `.ignoreNew` | 新規要求を拒否する（既定） |
-| | `.cancelExisting` | 追跡中 run をキャンセルし、新規要求を開始する |
-| | `.allowConcurrent` | 新規要求も受け付ける |
-| `ActionDuplicatePolicy` | `.ignoreNew` | 新規要求を拒否する（既定） |
-| | `.allowConcurrent` | 新規要求も受け付ける |
+| `TaskStartPolicy` | `.ignoreNew` | 新しい要求をスキップする（既定値） |
+| | `.cancelExisting` | 追跡中の実行にキャンセルを要求して追跡から外し、新しい要求を開始する |
+| | `.allowConcurrent` | 追加の実行を開始する |
+| `ActionDuplicatePolicy` | `.ignoreNew` | 新しい要求をスキップする（既定値） |
+| | `.allowConcurrent` | 追加の実行を開始する |
 
-Runner は task を所有しないため、キャンセルによる置換方針を持たない。
-Store の `.ignoreNew` は、手動キャンセルで追跡から外れた run を重複として扱わない。
+Runner はタスクを所有しないため、キャンセルによる差し替えは行わない。
+Store の手動キャンセル後は、未終了の実行が残っていても `.ignoreNew` が新しい要求を受け付ける。
 
-## 返り値
+## 受付結果と終了結果
 
-| 型 | 内容 |
+| 型 | 値と用途 |
 |---|---|
 | `TaskStartOutcome` | Store の受付結果。`.started(ActionRun)` または `.skipped(TaskStartSkipReason)` |
-| `TaskStartSkipReason` | `.alreadyRunning` / `.closed` |
-| `ActionOutcome<Success>` | Runner の最終結果。`.succeeded(Success)` / `.cancelled` / `.skipped(ActionSkipReason)` / `.failed(ActionFailure)` |
-| `ActionSkipReason` | `.alreadyRunning` |
-| `ActionFailure` | エラーの型名とメッセージを文字列で保持する比較可能な値 |
+| `TaskStartSkipReason` | Store が開始を拒否した理由。`.alreadyRunning` または `.closed` |
+| `ActionOutcome<Success>` | Runner の終了結果。`.succeeded(Success)`・`.cancelled`・`.skipped(ActionSkipReason)`・`.failed(ActionFailure)` |
+| `ActionSkipReason` | Runner が実行を拒否した理由。`.alreadyRunning` |
+| `ActionFailure` | エラー型名とメッセージの文字列を持つ、等価比較可能な `Sendable` の値 |
 
-Runner の `.cancelled` は operation が `CancellationError` を投げたことを表す。
-キャンセル要求の有無だけでは outcome は決まらず、operation が値を返せば `.succeeded` になる。
-`ActionFailure` の文字列はログ・計測向けであり、業務分岐用の安定したエラーコードではない。
+Runner は `CancellationError` の送出を `.cancelled` に変換する。
+値が返された場合は、キャンセル要求の有無にかかわらず `.succeeded` になる。
+`ActionFailure` は報告用の値であり、文字列を業務分岐の安定したエラーコードとして使わない。

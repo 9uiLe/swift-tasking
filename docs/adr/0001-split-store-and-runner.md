@@ -1,25 +1,27 @@
-# ADR-0001: task の所有と実行制御を分ける
+# ADR-0001: タスクの所有と実行制御を分ける
 
 ## 前提
 
-同期 UI コールバックは非同期処理の終了を await できないため、コールバックの外まで生きる
-task の所有者が必要になる。async 関数では呼び出し元の task をそのまま使える。
-どちらの入口にも Action 単位の重複制御が必要になり得る。
+同期 UI コールバックから始めた非同期処理には、コールバックの外でタスクを管理する所有者が必要になる。
+async 関数には既に呼び出し元のタスクがあり、その中で処理を続けられる。
+どちらの入口にも、保存や更新といった Action 単位の重複制御が必要になる。
 
 ## 決定
 
-- `ViewTaskStore` は task を作成・所有し、lifetime と重複方針を管理する。
-  同期の `start` は受付結果の `TaskStartOutcome` を返す。
-- `ActionRunner` は呼び出し元の task 内で operation を実行する。
-  重複を制御し、最終結果の `ActionOutcome<Success>` を返す。
-- 非 UI の task 所有は `TaskSlot` が担当する。[ADR-0010](0010-tasking-core-task-slot.md) を参照する。
+| 型 | タスクの扱い | 返すもの |
+|---|---|---|
+| `ViewTaskStore` | MainActor 上で作成し、ハンドルを所有する | 同期の受付結果 `TaskStartOutcome` |
+| `ActionRunner` | MainActor 上で、呼び出し元のタスクを使う | 終了結果 `ActionOutcome<Success>` |
+| `TaskSlot` | 非 UI 向けの actor として作成・所有する | 差し替えの受付結果 `Bool` |
+
+Store と Runner は Action を追跡し、Store と Slot はタスクを所有する。
+Slot の役割は [ADR-0010](0010-tasking-core-task-slot.md) に定める。
 
 ## 理由と制約
 
-Runner が task を作らなければ、呼び出し元のキャンセル状態と task-local 値を保って
-operation を実行できる。Runner に task をキャンセルする責務はなく、重複方針は
-`.ignoreNew` と `.allowConcurrent` に限る。
+入口ごとに所有者と結果の受け取り方が明確になる。
+Runner は新しいタスクを作らず、呼び出し元のキャンセル状態と TaskLocal を使って処理を実行できる。
+その重複方針は `.ignoreNew` と `.allowConcurrent` とする。
 
-Store は所有中の task にキャンセルを要求できるため `.cancelExisting` も持つ。
-Store の開始結果は業務結果ではなく、完了した業務結果は ViewModel の状態に反映する。
-呼び出し箇所で task の所有者と結果の受け取り方を選択できる形にする。
+Store はタスクへキャンセルを要求できるため、`.cancelExisting` による差し替えも提供する。
+受付結果は業務結果を含まず、処理の結果や表示は ViewModel が管理する。

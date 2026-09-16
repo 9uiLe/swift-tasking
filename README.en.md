@@ -4,69 +4,78 @@
 
 [![CI](https://github.com/9uiLe/swift-tasking/actions/workflows/ci.yml/badge.svg)](https://github.com/9uiLe/swift-tasking/actions/workflows/ci.yml)
 
-Tasking makes ownership, duplicate policy, and cooperative cancellation explicit
-for unstructured Swift Concurrency tasks. It has two library products and no
-external package dependencies.
+Tasking makes **ownership, duplicate policy, cancellation, and completion** explicit
+for unstructured Swift Concurrency tasks. It provides `Tasking` for UI code and
+`TaskingCore` for non-UI code, with no external package dependencies.
 
 ## Choose an entry point
 
 | Work to perform | Use |
 |---|---|
-| Concurrent work that finishes within an async scope | `async let` or a task group |
-| Loading tied to a SwiftUI view's lifetime or input | `.task` or `.task(id:)` |
-| Work started by a synchronous UI callback that needs an owner | `Tasking.ViewTaskStore` |
-| Duplicate control and a terminal result within an async call | `Tasking.ActionRunner` |
-| One replaceable task owned by a non-UI service | `TaskingCore.TaskSlot` |
+| Concurrent work that joins before an async function returns | `async let` / task group |
+| Work tied to SwiftUI view lifetime or input | `.task` / `.task(id:)` |
+| Work started from a synchronous UI callback that needs a task owner | `ViewTaskStore` |
+| Duplicate control and terminal outcomes within the caller's task | `ActionRunner` |
+| Replaceable work owned by a non-UI service | `TaskSlot` |
 
-Structured concurrency and SwiftUI lifecycle tasks provide ownership through their
-scopes. Use them when those scopes fit the work. Store and Slot own tasks that
-must continue beyond a synchronous callback or method invocation.
+Use structured concurrency or SwiftUI lifecycle tasks when their scopes fit the
+work. With Tasking, ViewModels and services still own progress, results, business
+error handling, and retry decisions.
 
 ## Installation
 
-For the published package, add this dependency:
+Add the following dependency for the published package:
 
 ```swift
 .package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.3.0")
 ```
 
-This documentation describes the checkout's API. Features listed under Unreleased
-in the [release notes](CHANGELOG.md) require a local checkout until published.
-To depend on that checkout:
+Documentation at each revision describes that revision's API. Features listed
+under `Unreleased` in the [changelog](CHANGELOG.md) require a local checkout until
+published:
 
 ```swift
 .package(path: "../swift-tasking")
 ```
 
-Choose the product in your target dependencies:
+Choose the UI product in your target dependencies:
 
 ```swift
 .product(name: "Tasking", package: "swift-tasking")
 ```
 
-For a non-UI target that needs replaceable task ownership:
+For non-UI task ownership, use:
 
 ```swift
 .product(name: "TaskingCore", package: "swift-tasking")
 ```
 
-The package requires Swift tools 6.0 and Swift 6 language mode, including in
-consuming feature modules.
+Swift tools 6.0+ and Swift 6 language mode are required, including in consuming
+feature modules. Deployment targets are iOS 13+, macOS 10.15+, tvOS 13+, watchOS 6+,
+and visionOS 1+. Examples using Observation or newer SwiftUI APIs require their
+corresponding OS versions. The [prototype](Examples/TaskingPrototype/Package.swift)
+targets iOS 17+ and macOS 14+.
 
-Deployment targets: iOS 13+, macOS 10.15+, tvOS 13+, watchOS 6+, and visionOS 1+.
-Examples that use Observation or newer SwiftUI APIs require their corresponding OS
-versions; the [prototype](Examples/TaskingPrototype/Package.swift) targets iOS 17+
-and macOS 14+.
+## Three states to distinguish
 
-## ViewTaskStore: own work from a synchronous UI callback
+- **Admission:** whether new work can start. `close()` stops admission permanently.
+- **Tracking:** whether an Action participates in duplicate checks and queries.
+  Store cancellation removes tracking immediately.
+- **Ownership:** whether a task handle is retained to manage completion. Store and
+  Slot retain their tasks until termination.
 
-`ViewTaskStore` is a MainActor class. `start` creates and owns a task, records its
-Action ID and lifetime, and returns an admission result synchronously.
+An Action is a kind of work, such as saving or refreshing, identified by an
+`ActionID`. An `ActionRun` combines that ID with a UUID-based `ActionRunID` to
+identify one invocation. Multiple runs can share an Action ID.
 
-The following view receives an application-owned `SettingsViewModel` whose
-`save(cancellation:)` method updates UI state, handles business failures, and
-cooperates with cancellation. A complete implementation is in
-[SettingsFeature.swift](Examples/TaskingPrototype/Sources/TaskingPrototype/SettingsFeature.swift).
+## ViewTaskStore: start from a synchronous UI callback
+
+`ViewTaskStore` creates and owns tasks on MainActor. Its synchronous `start` method
+returns an admission result. This view receives an application-owned
+`SettingsViewModel`; `save(cancellation:)` handles cooperative cancellation and
+business error presentation. See
+[SettingsFeature.swift](Examples/TaskingPrototype/Sources/TaskingPrototype/SettingsFeature.swift)
+for the complete implementation.
 
 ```swift
 import SwiftUI
@@ -98,64 +107,40 @@ struct SettingsScreen: View {
 }
 ```
 
-### Admission and duplicate policy
+### Duplicate policy and admission
 
-An Action ID identifies a kind of work, such as `settings.save`. An `ActionRun`
-identifies one invocation using both its Action ID and a UUID-based run ID.
-Declare Action IDs as feature constants.
-
-| `TaskStartPolicy` | Behavior |
+| `TaskStartPolicy` | When the same Action ID has a tracked run |
 |---|---|
-| `.ignoreNew` (default) | Skip if the same Action ID has a tracked run |
-| `.cancelExisting` | Cancel and untrack runs with that ID, then start a new run |
-| `.allowConcurrent` | Start an additional run with that ID |
+| `.ignoreNew` (default) | Skip the new request |
+| `.cancelExisting` | Request cancellation, untrack existing runs, and start the new request |
+| `.allowConcurrent` | Start an additional run |
 
 `TaskStartOutcome` is `.started(ActionRun)` or `.skipped(TaskStartSkipReason)`.
-Skip reasons are `.alreadyRunning` and `.closed`. A closed store rejects every
-start without running the operation. Admission is separate from the operation's
-business result.
+Skip reasons are `.alreadyRunning` and `.closed`; rejected requests do not call the
+operation. Admission does not represent a business result. Use the returned
+`ActionRun` to query, cancel, or await one invocation.
 
-### Lifetime and UI state
+### Lifetime and presentation state
 
 `ActionLifetime` is a label for queries and group cancellation. Built-in values are
-`.screenBound`, `.sceneBound`, and `.appBound`; custom string values are supported.
-Place the store in an owner that lives as long as the work should be managed, and
-connect lifecycle events to cancellation. A label does not extend the owner's
-lifetime or grant background execution time.
+`.screenBound`, `.sceneBound`, and `.appBound`; custom strings are supported. Place
+the store in an owner that lives as long as the work needs management, and connect
+lifecycle events to cancellation. Labels do not extend owner lifetime or grant OS
+background execution time.
 
-Loading, progress, results, and errors belong to the ViewModel. Tracking queries
-are synchronous snapshots and do not drive SwiftUI redraws. When invocations can
-overlap, guard results and cleanup with a generation token so an older invocation
-cannot overwrite a newer one. See the [recipes](docs/recipes.md).
-
-### Errors
-
-Handle business failures inside the operation, typically by updating ViewModel
-state. A thrown `CancellationError` is normal cancellation. Other escaping errors
-violate the operation's contract.
-
-A store-level observer can report those errors:
-
-```swift
-let taskStore = ViewTaskStore { run, failure in
-    print("\(run.actionID): \(failure.typeName): \(failure.message)")
-}
-```
-
-The observer runs on MainActor before completion removes tracking. A run already
-untracked by cancellation remains untracked. Without an observer, an escaping
-error triggers a debug assertion and has no release notification. After store
-deallocation, escaping errors use that same assertion behavior. The store retains
-the observer; use weak captures when it refers back to the store's owner.
+`isRunning` and `runningCount` are synchronous tracking queries. They do not drive
+SwiftUI redraws. Keep loading, progress, results, and errors in observable ViewModel
+state. Use generation guards when invocations can overlap; see the
+[recipes](docs/recipes.md) for examples.
 
 ## ActionRunner: execute in the caller's task
 
-`ActionRunner` is a MainActor class that tracks Action invocations and maps their
-terminal results. It runs the operation in the caller's task. The caller retains
-responsibility for task ownership and cancellation.
+`ActionRunner` tracks Actions on MainActor and returns their terminal outcomes.
+The caller owns and cancels the task. Retain a runner in the feature owner when
+multiple calls need to share duplicate control.
 
-In this MainActor async example, `billingService` is an application dependency
-with an async throwing `fetchPlans()` method returning a Sendable value:
+This MainActor async example uses an application dependency, `billingService`,
+whose async throwing `fetchPlans()` method returns a Sendable value:
 
 ```swift
 let runner = ActionRunner()
@@ -180,21 +165,20 @@ case let .failed(failure):
 }
 ```
 
-Keep a runner in the feature owner when multiple calls should share duplicate
-control. Runner supports `.ignoreNew` and `.allowConcurrent`. Its optional
-synchronous `onStart` callback runs while the admitted run is tracked; skipped
-calls execute neither `onStart` nor the operation.
+Runner supports `.ignoreNew` and `.allowConcurrent`. Its optional synchronous
+`onStart` callback runs after tracking is registered and before the operation.
+Skipped calls execute neither callback nor operation.
 
-A thrown `CancellationError` maps to `.cancelled`. A returned value maps to
-`.succeeded`, even if cancellation was requested. `ActionFailure` stores error
-type and message strings for reporting. Perform error-specific recovery where the
-original error type is available, inside the operation.
+A thrown `CancellationError` maps to `.cancelled`; a returned value maps to
+`.succeeded`, even if cancellation was requested. `ActionFailure` contains an error
+type name and message for reporting. Handle recovery that requires the original
+error type inside the operation.
 
-## TaskSlot: own replaceable work outside the UI
+## TaskSlot: replace non-UI work
 
-`TaskSlot` is an actor in `TaskingCore`. It owns at most one active task and retains
-cancelled or superseded tasks until they terminate. The operation handles its own
-business errors and accepts the same cancellation contract.
+`TaskingCore.TaskSlot` is an independent actor. `replace` cancels the active task
+and starts a replacement. The operation handles business errors and cancellation
+without throwing errors out of the closure.
 
 ```swift
 import TaskingCore
@@ -218,60 +202,73 @@ actor RefreshCoordinator {
 }
 ```
 
-`replace` cancels the active task and starts a replacement. It returns `false`
-after closure. Superseded operations may overlap until they cooperate with
-cancellation. Slot provides ownership; the application defines debounce timing,
-retry, result selection, and ordering.
+After closure, `replace` returns `false`. Superseded tasks remain owned until
+termination, so operations can overlap until they cooperate with cancellation.
+The service defines debounce timing, retries, result selection, and side-effect
+ordering.
 
-## Cancellation and completion
+## Manage cancellation and completion
 
-`CancellationContext.check()` and `isCancelled` read the task currently executing.
-They do not capture a cancellation token or connect separate unstructured tasks.
-Check cancellation around long work and important suspension points. Use
-`async let` or task groups for concurrency inside operations.
+`CancellationContext.check()` and `isCancelled` read the task executing at the time
+of access. Check around long work and important suspension points. Use `async let`
+or task groups for concurrency inside an operation. Passing the context into
+another unstructured task does not create a cancellation relationship.
 
-Cancellation removes Store runs from tracking immediately. Their handles remain
-owned until termination. Consequently, `isRunning == false` does not prove
-completion, and `.ignoreNew` may admit work while a manually cancelled operation
-is still executing.
+Store cancellation removes tracking while retaining the handle until termination.
+Consequently, `isRunning == false` does not prove completion, and `.ignoreNew` may
+admit a new request immediately after manual cancellation.
 
-| Intent | Store / Slot operation |
+| Intent | Operation |
 |---|---|
-| Request cancellation and keep accepting work | Store `cancel(...)` / `cancelAll()`, Slot `cancel()` |
-| Stop admission and let accepted work finish | `close()`, then `waitForIdle()` |
-| Stop admission, request cancellation, and wait | `cancelAndWaitForIdle()` |
-| Wait for one Store run, including cancelled work | `awaitCompletion(of:)` |
+| Cancel while continuing to accept work | Store `cancel(...)` / `cancelAll()`, Slot `cancel()` |
+| Close admission and let accepted work finish | `close()`, then `waitForIdle()` |
+| Close admission, request cancellation, and wait | `cancelAndWaitForIdle()` |
+| Wait for one Store invocation | `awaitCompletion(of:)` |
 
-Close is terminal and idempotent. `waitForIdle()` includes work admitted during
-the wait if admission remains open. Cancelling the waiting task does not cancel
-owned work or interrupt the wait. An operation that does not terminate can keep a
-wait suspended indefinitely.
+If admission remains open, `waitForIdle()` includes work started during the wait.
+Cancelling the waiting task neither cancels owned work nor interrupts the wait.
+An operation that never terminates keeps the wait suspended.
 
-An owned operation must not wait for itself, including through a structured child.
+An operation must not wait for itself, including through a structured child.
 Debug builds assert on self-waiting; release builds exclude the inherited ownership
-context and wait for other owned work. This protection does not detect arbitrary
-cycles between tasks.
+context from the wait. This does not detect arbitrary cycles between tasks.
 
-Store and Slot request cancellation on deallocation. An operation that strongly
-captures its owner can prevent that deallocation. Capture only the dependencies
-needed for long work and refer back to owners weakly. Both owners forward an
-optional priority to Swift's `Task` initializer; `nil` inherits caller priority.
+Store and Slot request cancellation on deallocation. Strongly capturing the owner
+can prevent deallocation, so capture the dependencies needed for the operation and
+refer back to owners weakly. Both forward an optional priority to `Task`; `nil`
+inherits caller priority.
 
-## Documentation
+## Report unhandled Store errors
 
-Japanese is the primary language of this repository. The design and operating
-guides below are maintained in Japanese; this README, the contribution guide, and
-the security policy also have English editions.
+Handle Store business errors inside the operation. An escaping `CancellationError`
+is normal cancellation; other escaping errors violate the operation's contract.
+An observer can connect those failures to logging:
 
-- [Documentation guide](docs/README.md) — reading order and design decisions
-- [Architecture](docs/architecture.md) — responsibilities, invariants, and tests
-- [Lifetimes](docs/lifetimes.md) — screen, scene, and application ownership
-- [Recipes](docs/recipes.md) — cancellation, state updates, and shutdown
-- [Adoption](docs/adoption.md) — feature boundaries, IDs, and operational checks
-- [Performance](docs/performance.md) — complexity, measurements, and tradeoffs
-- [Releasing](docs/releasing.md) — owner authentication, preparation, and publication
-- [Contributing](CONTRIBUTING.en.md) — validation and documentation conventions
+```swift
+let taskStore = ViewTaskStore { run, failure in
+    print("\(run.actionID): \(failure.typeName): \(failure.message)")
+}
+```
+
+The observer runs on MainActor before completion removes tracking. Tracking
+already removed by cancellation is not restored. Without an observer, or after
+store deallocation, escaped errors trigger a debug assertion and have no release
+notification. The store retains the observer, so use weak references when the
+observer refers back to its owner.
+
+## Design and development
+
+- [Documentation guide](docs/README.md) — reading paths and design decisions
+- [Architecture](docs/architecture.md) — public contracts, internals, invariants, and tests
+- [Lifetimes and ownership](docs/lifetimes.md) — screen, scene, and application placement
+- [Performance](docs/performance.md) — complexity, measurement conditions, and interpretation
+- [Contributing](CONTRIBUTING.en.md) — implementation and validation workflow
+- [Releasing](docs/releasing.md) — authentication, document preparation, publication, and recovery
 - [Security policy](SECURITY.en.md) — vulnerability reporting
+
+Japanese is the primary language. English editions are provided for this README,
+the contribution guide, and the security policy; design and operations guides are
+maintained in Japanese. The code is available under the [MIT License](LICENSE).
 
 Swift concurrency references: [structured concurrency](https://developer.apple.com/videos/play/wwdc2021/10134/),
 [advanced structured concurrency](https://developer.apple.com/videos/play/wwdc2023/10170/),

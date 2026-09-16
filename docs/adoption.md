@@ -1,42 +1,35 @@
 # 導入と運用
 
-Tasking を複数の feature やチームで使う場合は、所有者の配置、ActionID、キャンセル後の
-状態更新を共通ルールにする。基本的な用途は [用途と設計原則](positioning.md) を参照する。
+Tasking を機能へ組み込む際は、所有者・開始方針・状態更新・終了処理を一組として設計する。
+パッケージの依存指定と対応 OS は [README](../README.md#導入)、各型の契約は [アーキテクチャ](architecture.md) を参照する。
 
-## Swift 6 と actor 隔離
+## 1. 実行場所と所有者を決める
 
-パッケージは Swift tools 6.0、Swift 6 言語モードを使用する。
-Tasking を呼び出す feature module も Swift 6 言語モードをサポート条件とする。
+| 機能の入口 | 選ぶもの | 利用側が持つ責任 |
+|---|---|---|
+| 同期 UI コールバック | `Tasking.ViewTaskStore` | Store の配置、寿命ラベル、キャンセルのイベント |
+| MainActor 上の async 呼び出し | `Tasking.ActionRunner` | 呼び出し元のタスクの所有とキャンセル |
+| 非 UI サービスの差し替え可能な処理 | `TaskingCore.TaskSlot` | Slot の配置、結果の採用、サービス終了 |
 
-Swift 5 言語モードの target から import できる場合でも、closure の capture は呼び出し側の
-言語モードで検査される。import の成功だけでは strict concurrency の保証にならない。
+利用側の機能モジュールも Swift 6 言語モードにする。
+Swift 5 モードで import できても、クロージャの捕捉は利用側の規則で検査されるため、サポート条件を満たさない。
 
-UI の同期 callback と ViewModel には `Tasking` を使い、Store / Runner の MainActor 隔離に従う。
-非 UI の service actor が置換可能な task を所有する場合は `TaskingCore` に依存する。
-Slot は task 所有を担当し、debounce の時間、retry、flush、業務状態は service が持つ。
+Store と Runner は MainActor に隔離される。重い同期計算を置くと UI の時間を占有するため、
+計算を担当する actor や関数の隔離を確認する。`await` の記述だけでは実行場所は決まらない。
 
-## 所有者を配置する
+Slot は独立した actor で、タスクのハンドルを所有する。デバウンス、再試行、結果状態はサービスが持つ。
+パッケージは default actor isolation と `NonisolatedNonsendingByDefault` を有効にしない。
+コンパイラ設定や `@concurrent` などの指定を変える場合は、Swift tools の対応範囲と処理本体の実行場所を検証する。
 
-- Store は feature、画面、またはアプリ全体の共通処理を単位として配置する。
-- 共有 Store は、同じ寿命とキャンセル方針を持つ Action に限定する。
-- UI に進捗を表示する ViewModel は、その処理を観測できる期間だけ所有する。
-- operation が Store / Slot の所有者を強参照しないかを確認する。
+## 2. ActionID と開始方針を宣言する
 
-[ライフタイムと所有構成](lifetimes.md) に画面・シーン・アプリの例を示す。
-`.appBound` は OS の background execution 権限を与えない。background での完遂には
-`beginBackgroundTask`、`BGTaskScheduler`、background `URLSession` など、用途に合う OS API を使う。
-
-## ActionID と重複方針
-
-ActionID の衝突は同じ Store / Runner 内で重複判定に影響する。
-たとえば共有 Store に別々の feature が `"sync"` を登録すると、一方の `.ignoreNew` が
-他方を拒否する可能性がある。
-
-- 定数は `feature.action`、entity ごとは `feature.action.<entity-id>` を使う。
-- 同じ ActionID の方針は feature 内の1か所に置く。
-- 同じ ID の異なる operation を混在させる場合は、重複扱いが意図どおりかを確認する。
+ActionID は、同じ Store または Runner 内で重複を判断する単位となる。
+共有 Store に複数の機能が `"sync"` を登録すると、一方の要求がもう一方の重複として扱われる。
+機能単位の名前空間と、対象ごとの識別子を使う。
 
 ```swift
+import Tasking
+
 enum BillingActions {
     static let refreshPlans: ActionID = "billing.refreshPlans"
     static let refreshPlansPolicy: TaskStartPolicy = .ignoreNew
@@ -47,48 +40,49 @@ enum BillingActions {
 }
 ```
 
-## 終了処理
+同じ Action の開始方針は機能内で共有し、呼び出し箇所ごとに分散させない。
+入口が多い場合は、ID と方針を選択する同期ハンドラにまとめる。
+Runner では `ActionDescriptor` を使う。
 
-画面の再表示などで同じ Store を再利用するときは `cancel(lifetime:)` を使う。
-所有者を終了するときは `cancelAndWaitForIdle()`、受け付け済みの処理を自然完了させるときは
-`close()` の後に `waitForIdle()` を呼ぶ。Slot も同じ受付停止の契約を持つ。
+Store の開始結果は `.started(run)`、`.skipped(.alreadyRunning)`、`.skipped(.closed)` のいずれかである。
+開始がスキップされた場合に必要な表示やログを、利用側で決める。
 
-Store の開始結果は `TaskStartOutcome` で確認する。
+## 3. 寿命と表示状態を合わせる
 
-| 結果 | 意味 |
-|---|---|
-| `.started(run)` | task を受け付けた。業務結果は operation / ViewModel が扱う |
-| `.skipped(.alreadyRunning)` | 同じ ActionID の追跡中 run があり、`.ignoreNew` が拒否した |
-| `.skipped(.closed)` | Store の受付が閉じている |
+Store と ViewModel は、その処理を管理・表示したい期間に合う所有者へ配置する。
+共有 Store を使う場合は、ラベルによる一括キャンセルの範囲を利用する機能間で合意する。
+配置例は [寿命と所有構成](lifetimes.md) を参照する。
 
-Runner の拒否理由は `ActionSkipReason.alreadyRunning` である。
-Runner は task の所有者ではなく、受付を閉じる状態を持たない。
+処理本体は長い処理や重要な中断点の前後でキャンセルを確認する。
+読み込み中・成功・失敗・キャンセルの状態遷移を ViewModel に定義し、実行が重なる場合は世代ガードを使う。
+手動キャンセル後は、`.ignoreNew` でも前の処理が終わる前に再開始できる。
 
-キャンセル要求と実終了は分かれているため、`.ignoreNew` は手動キャンセル後の重なりを防がない。
-表示の loading・結果・エラーには必要に応じて世代ガードを設ける。[利用レシピ](recipes.md) を参照する。
+バックグラウンドでの完遂が必要な処理には、`beginBackgroundTask`、`BGTaskScheduler`、
+バックグラウンド `URLSession` など、要件に合う OS API を選ぶ。
+`.appBound` はその実行権限を与えない。
 
-## 観測と検証
+## 4. 終了処理と診断を接続する
 
-Store の `onUnhandledError` observer は、operation から漏れた `CancellationError` 以外の
-エラーを報告する。composition root でログや crash reporting に接続する。
-業務エラーの回復と表示は operation 内で完結させる。
-observer がない場合は Debug で assertion が発生し、Release では通知しない。
+同じ所有者を再利用するキャンセルと、所有者を終了する操作を分ける。
+再表示する画面では `cancel(lifetime:)`、所有者の終了では `cancelAndWaitForIdle()` を使う。
+受理済みの処理を完了させる場合は `close()` と `waitForIdle()` を組み合わせる。
 
-テストでは ViewModel の状態や domain event により業務結果を確認する。
-`awaitCompletion(of:)` / `waitForIdle()` は、キャンセル済みの task も含む実終了の確認に使う。
-CI は root package と prototype の Debug・Release・Thread Sanitizer、strict concurrency、
-iOS Simulator 向けビルドを検査する。
+Store の `onUnhandledError` は、処理本体から漏れた `CancellationError` 以外のエラーの通知点である。
+アプリの依存を組み立てる場所でログや障害報告へ接続する。
+業務エラーの回復と表示は処理本体で行い、通知先から所有者に戻る参照には弱参照を使う。
+通知先がない場合は Debug でアサーションが発生し、Release では通知されない。
 
-大量の開始や照会は [性能特性](performance.md) の測定方法で確認する。
-処理件数、ActionID の分布、キャンセル後に残る operation の数を実アプリに合わせる。
+## 5. 機能の契約を検証する
 
-## ツールチェーンと配布
+- 同じ Action の連続呼び出しが、定めた開始方針に従う。
+- キャンセルを処理本体が観測し、表示状態を復旧する。
+- 古い処理の完了や後処理が、新しい状態を上書きしない。
+- 所有者の終了時には新規受付を止め、キャンセル済みの処理も含めて終了を確認する。
+- 画面を閉じた後や所有者を解放した後に、不要な参照が残らない。
 
-公開依存には必要な API を含む SemVer tag を指定する。開発中の checkout を使う方法は
-[README](../README.md#導入) を参照する。
-公開担当者は [リリース設計と運用](releasing.md) のprepare・check・publish手順を使う。
+業務結果は ViewModel の状態や業務イベントから確認し、タスクの終了は完了待ち API から確認する。
+テストと CI の実行方法は [コントリビューションガイド](../CONTRIBUTING.md) に定める。
+大量の開始や照会がある機能では、[性能特性](performance.md) に沿って件数・ID 分布・一致率・未終了タスク数を測る。
 
-パッケージは default actor isolation と `NonisolatedNonsendingByDefault` を有効にしていない。
-コンパイラ設定を変える際には、Slot の nonisolated async operation がどの executor で動くかを
-検証する。呼び出し元の隔離を継承する設定は、Slot への意図しない直列化につながり得る。
-`@concurrent` などの指定は Swift tools の対応範囲と合わせて評価する。
+公開には必要な API を含む SemVer タグを使う。
+配布担当者は [リリース設計と運用](releasing.md) の準備・検証・公開手順に従う。

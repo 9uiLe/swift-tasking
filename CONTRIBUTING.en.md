@@ -2,86 +2,95 @@
 
 [日本語](CONTRIBUTING.md) | English
 
-Tasking is a reference implementation for explicit ownership of unstructured Swift
-Concurrency tasks. Design consistency, readable contracts, and reliable cancellation
-and completion behavior guide contributions. The code is available under the
-[MIT License](LICENSE), including for incorporation into other codebases.
+Tasking makes ownership and execution policy explicit for unstructured tasks.
+Contributions should preserve readable public contracts, coherent responsibilities,
+and reliable cancellation and completion waits. The code is available under the
+[MIT License](LICENSE).
 
-## Understand the design
+## Understand the design and contracts
 
-Start with the [documentation guide](docs/README.md) and
-[architecture](docs/architecture.md). Design decisions live in `docs/adr/`.
-A proposal that changes a documented contract should update its rationale and the
-public behavior tests together.
+Read [purpose and principles](docs/positioning.md), the [glossary](docs/glossary.md),
+and the [architecture](docs/architecture.md) to identify the affected responsibility
+and public contract. The [decision index](docs/README.md#設計判断adr) links to design
+rationale. These design documents are maintained in Japanese.
 
-Production code explains how behavior works. Tests specify observable behavior.
-ADRs hold durable design rationale; commit messages hold the motivation specific to
-an individual change. Implementation comments preserve constraints or explain why
-an apparent alternative is unsafe. See [repository guidance](AGENTS.md).
+| Information | Where it belongs |
+|---|---|
+| How behavior is implemented | Code names, types, control flow, and module boundaries |
+| Observable behavior | Public API documentation comments and tests |
+| Durable design rationale | `docs/adr/` |
+| Problems, motivation, and context specific to one change | Commit messages |
+| Constraints or reasons to reject alternatives that code cannot express | Implementation comments |
+
+Update documentation, tests, and rationale together when changing a contract.
+Prefer clearer names and structure over comments that narrate implementation.
+See [repository guidance](AGENTS.md) for the full conventions.
 
 ## Validate changes
 
-Use the Swift 6 language mode and the package's Swift tools 6.0 compatibility floor.
-Keep strict concurrency checks free of warnings. CI runs these commands for both
-the root package and `Examples/TaskingPrototype`:
+Keep compatibility with Swift tools 6.0 and use Swift 6 language mode. Run the
+following from the repository root to validate both the library and prototype:
 
 ```sh
-swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
-swift test -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
-swift test -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
-swift test --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+for tasking_package in . Examples/TaskingPrototype; do
+  swift build --package-path "$tasking_package" -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+  swift test --package-path "$tasking_package" -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+  swift test --package-path "$tasking_package" -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+  swift test --package-path "$tasking_package" --sanitize=thread -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+done
 ```
 
-The root package also builds for iOS Simulator:
+Use Xcode for the iOS Simulator build:
 
 ```sh
 xcodebuild build -quiet -scheme swift-tasking-Package \
   -destination 'generic/platform=iOS Simulator'
 ```
 
-Test through public interfaces. Use operation gates and completion APIs to control
-ordering; do not infer completion from tracking queries, scheduler delays, or private
-storage. The [testing guidance](docs/architecture.md#テスト方針) explains the observation points.
+Test through public interfaces. Use operation gates to control arrival and
+resumption, and completion APIs to establish termination. Do not infer completion
+from tracking queries, short sleeps, or private storage. See the
+[testing guidance](docs/architecture.md#テスト方針) for observation points.
 
-Performance measurements belong in the independent Release
-[benchmark package](Benchmarks/README.md). Report workload, toolchain, source identity,
-and variation. Keep absolute timing thresholds out of correctness tests.
+Measure performance with the independent Release [benchmark](Benchmarks/README.md).
+Report workloads, toolchain, source identity, and variation. Keep absolute timing
+thresholds out of correctness tests.
 
-## Documentation and examples
+## Write documentation and examples
 
-Japanese is the primary language for documentation, API comments, implementation
-comments, commit messages, and pull requests. Use the [glossary](docs/glossary.md).
-Keep code identifiers, protocol fields, command names, and stable CI check names in
-their established form. The MIT license retains its original text.
+Japanese is the primary language for documents, public API comments, implementation
+comments, commit messages, and pull requests. Keep code identifiers, protocol fields,
+command names, and stable CI check names in their established form. Preserve the
+original MIT license text.
 
-English editions are provided for README, this contribution guide, and the security
-policy. Update each translation with its Japanese source when its content changes;
-do not duplicate every design document. Both READMEs must describe the same API,
-examples, requirements, and installation version. Describe complete contracts so
-readers need no conversation history.
+README, this guide, and the security policy have Japanese sources and English
+`.en.md` editions; update each pair together. Design documents, ADRs, the changelog,
+and operating guides are maintained in Japanese. Both READMEs must describe the
+same API, examples, requirements, and installation version.
 
-Check relative links and the availability requirements of Swift snippets. Examples
-must identify application-provided dependencies and demonstrate cancellation and
-error handling consistent with the public contract. Record release-facing API
-changes in [CHANGELOG.md](CHANGELOG.md).
+Organize explanations around purpose, prerequisites, and the current contract.
+Examples must identify imports, execution context, OS requirements, and dependencies
+provided by the application. Keep cancellation and error handling consistent with
+public contracts, and verify relative links and code examples.
 
-## Release tooling
+## Record release-facing changes
 
-Python 3.10+ tests exercise preparation, validation, and publication with temporary
-Git repositories and simulated GitHub responses:
+Write user-facing changes in Japanese under `## [Unreleased]` in
+[CHANGELOG.md](CHANGELOG.md). Include required action for breaking changes. Entries
+also become the GitHub Release body, so use full URLs. Preserve the machine-readable
+format of `[Unreleased]` and version headings.
+
+Release tooling tests require Python 3.10+:
 
 ```sh
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-CI runs `Release tooling checks` alongside `Swift package checks` on pull requests
-and master pushes. Publication requires both jobs to succeed for the exact master
-commit being released. Actions uses read-only permissions; the owner publishes
-locally with GitHub CLI authentication.
+Temporary Git repositories and simulated GitHub responses cover updating both
+READMEs, rejecting inconsistent documents, publishing, and resuming. CI runs
+`Release tooling checks` and `Swift package checks` on PRs and master pushes.
 
-Write user-facing entries in Japanese under `## [Unreleased]` in CHANGELOG.md.
-Keep the `[Unreleased]` and version headings in their machine-readable format.
-Use full URLs in release entries because they become the GitHub Release body. The owner's `prepare`
-command moves those entries into a dated release section, updates the Japanese and English README
-dependencies and comparison links, and opens a preparation PR.
-See the [release guide](docs/releasing.md) for commands and recovery procedures.
+The owner's `prepare` command updates release notes and both README dependency
+versions, then creates a preparation PR. Publication requires both CI jobs to
+succeed for the merged release commit. See the [release guide](docs/releasing.md)
+for procedures and recovery.

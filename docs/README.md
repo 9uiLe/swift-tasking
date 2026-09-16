@@ -1,45 +1,46 @@
 # Tasking ドキュメント
 
-Tasking は Swift Concurrency の unstructured task に、所有者・寿命・重複方針・
-キャンセルへの協調を明示するためのライブラリである。
+Tasking は、Swift Concurrency の非構造化タスクを誰が所有し、重複した要求をどう扱い、
+いつキャンセルして終了を確認するかを明示するライブラリである。
+このガイドは、利用・設計・保守に必要な資料の入口となる。
 
-## 読む順序
+## 利用を始める
 
-1. [用途と設計原則](positioning.md) — 解決する問題と、構造化並行性との使い分け
-2. [用語集](glossary.md) — Action、追跡、所有、完了の定義
-3. [アーキテクチャ](architecture.md) — 公開契約、内部構造、不変条件、テスト方針
-4. [ライフタイムと所有構成](lifetimes.md) — 画面・シーン・アプリに store を配置する方法
-5. [利用レシピ](recipes.md) — キャンセル、状態更新、終了待ちの実装例
-6. [導入と運用](adoption.md) — Swift 6、ActionID、監視、終了処理の運用ルール
-7. [性能特性](performance.md) — 計算量、測定結果、負荷に応じた判断
-8. [リリース設計と運用](releasing.md) — 所有者の認証、準備PR、公開条件、中断からの再開
+| 知りたいこと | 読む資料 |
+|---|---|
+| 動作要件、導入方法、基本的な呼び出し | [README](../README.md)（[English](../README.en.md)） |
+| Swift 標準の仕組みとの使い分け | [用途と設計原則](positioning.md) |
+| Action、追跡、所有、実終了の意味 | [用語集](glossary.md) |
+| 画面・シーン・アプリへの所有者の配置 | [寿命と所有構成](lifetimes.md) |
+| キャンセル、表示状態、結果の世代管理 | [利用レシピ](recipes.md) |
+| 機能へ組み込む際の設計と確認事項 | [導入と運用](adoption.md) |
 
-日本語を文書の正本とし、利用・貢献・脆弱性報告の入口には英語版も用意する。
-設計解説・ADR・変更履歴・運用手順は日本語で管理する。
+[TaskingPrototype](../Examples/TaskingPrototype/Sources/TaskingPrototype/PrototypeApp.swift) は、
+保存・検索・ダウンロード・同期・課金を題材にした実行可能なサンプルである。
 
-インストールと基本的な呼び出し方は [README](../README.md)（[English](../README.en.md)）、実行可能な利用例は
-[TaskingPrototype](../Examples/TaskingPrototype/Sources/TaskingPrototype/PrototypeApp.swift) を参照する。
+## 設計と保守を理解する
+
+[アーキテクチャ](architecture.md) は、公開する型の責務、状態遷移、不変条件、内部構造、
+テストの観測点を説明する。[性能特性](performance.md) は計算量と測定条件を示す。
+
+変更を検証する手順は [コントリビューションガイド](../CONTRIBUTING.md)、
+配布するソースを確定する手順は [リリース設計と運用](releasing.md) を参照する。
+公開済みの版と未公開の変更は [変更履歴](../CHANGELOG.md) に記録する。
+
+日本語を正本とする。README・コントリビューションガイド・セキュリティポリシーには英語版を用意し、
+対応する日本語版と同時に保守する。設計資料・ADR・変更履歴・運用手順は日本語で管理する。
 
 ## 設計判断（ADR）
 
-各 ADR は、設計上の判断を前提・決定・理由・制約に分けて説明する。
-番号は参照用の識別子であり、読む順序や機能の依存順序を表さない。
+ADR（Architecture Decision Record）は、設計上の判断と、その前提・理由・制約を記述する。
+以下は責務ごとの参照先である。
 
-| ADR | 判断 |
+| 領域 | 設計判断 |
 |---|---|
-| [0001](adr/0001-split-store-and-runner.md) | task の所有と、呼び出し元 task 内の実行制御を分ける |
-| [0002](adr/0002-cancellation-context-as-contract.md) | CancellationContext で協調の契約を明示する |
-| [0003](adr/0003-viewtaskstore-does-not-carry-errors.md) | Store の業務結果とエラー表示を ViewModel に置く |
-| [0004](adr/0004-lifetime-is-declared-not-enforced.md) | lifetime を選択用のラベルとして扱う |
-| [0005](adr/0005-actionfailure-erases-error-types.md) | 失敗の最終報告を文字列で表現する |
-| [0006](adr/0006-swift6-mainactor-only.md) | Swift 6 と明示的な actor 隔離を前提にする |
-| [0007](adr/0007-store-is-not-observable.md) | 追跡状態と観測可能な UI 状態を分ける |
-| [0008](adr/0008-publication-naming-license-language.md) | 名称・ライセンス・文書言語を定める |
-| [0009](adr/0009-cancel-removes-tracking-immediately.md) | キャンセル時に重複判定の対象から外す |
-| [0010](adr/0010-tasking-core-task-slot.md) | 非 UI の置換可能な task を TaskSlot が所有する |
-| [0011](adr/0011-task-slot-close-and-self-wait.md) | TaskSlot の受付停止・終了待ち・自己待機の契約を定める |
-| [0012](adr/0012-store-tracking-and-ownership.md) | Store の追跡と所有を独立した状態として扱う |
-| [0013](adr/0013-ownership-and-tracking-registries.md) | 追跡索引と所有台帳に内部の更新責務を集約する |
-| [0014](adr/0014-store-terminal-close.md) | Store の終了処理で新規開始を先に停止する |
-| [0015](adr/0015-measured-ownership-overhead.md) | 所有識別と照会のコストを抑える |
-| [0016](adr/0016-owner-authenticated-releases.md) | 所有者の認証とコミット単位のCI検証で公開する |
+| 公開する型 | [0001: 所有と実行制御](adr/0001-split-store-and-runner.md)、[0010: 非 UI のタスク所有](adr/0010-tasking-core-task-slot.md) |
+| キャンセル | [0002: 協調の契約](adr/0002-cancellation-context-as-contract.md)、[0009: キャンセル時の追跡解除](adr/0009-cancel-removes-tracking-immediately.md) |
+| 所有と終了 | [0012: Store の追跡と所有](adr/0012-store-tracking-and-ownership.md)、[0014: Store の受付停止](adr/0014-store-terminal-close.md)、[0011: Slot の受付停止と自己待機](adr/0011-task-slot-close-and-self-wait.md) |
+| アプリの状態 | [0003: 業務結果とエラー](adr/0003-viewtaskstore-does-not-carry-errors.md)、[0005: 失敗の報告形式](adr/0005-actionfailure-erases-error-types.md)、[0007: UI の観測可能な状態](adr/0007-store-is-not-observable.md) |
+| 寿命と実行場所 | [0004: 寿命ラベル](adr/0004-lifetime-is-declared-not-enforced.md)、[0006: Swift と actor 隔離](adr/0006-swift6-mainactor-only.md) |
+| 内部構造と性能 | [0013: 追跡索引と所有台帳](adr/0013-ownership-and-tracking-registries.md)、[0015: 識別と照会のコスト](adr/0015-measured-ownership-overhead.md) |
+| 公開と運用 | [0008: 名称・ライセンス・言語](adr/0008-publication-naming-license-language.md)、[0016: リリースの認証と検証](adr/0016-owner-authenticated-releases.md) |
