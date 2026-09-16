@@ -1,30 +1,29 @@
-# ADR-0003: Store の業務結果とエラー表示を ViewModel に置く
+# ADR-0003: 業務結果とエラー表示を ViewModel に置く
 
 ## 前提
 
-同期 UI コールバックから始める処理では、結果や失敗を UI の状態へ反映する必要がある。
-状態の反映と、task 所有の終了処理を別々の責務として定義する。
+保存結果、失敗時の表示、再試行の可否は、アプリケーションの業務状態に属する。
+同期 UI コールバックから始めたタスクでも、結果を扱う場所とタスクを管理する場所を明確にする。
 
 ## 決定
 
-Store の operation は `async throws -> Void` とする。
+Store の処理本体は `async throws -> Void` とし、業務結果と回復可能なエラーを内部で扱う。
+処理本体からの終了は次のように分類する。
 
-| operation の終了 | Store の扱い |
+| 終了の形 | Store の扱い |
 |---|---|
-| 正常 return | run の追跡と所有を解除する |
-| `CancellationError` | 正常なキャンセル終了として解除する |
-| その他の error | 契約違反を報告して解除する |
+| 正常な return | 追跡と所有を解除する |
+| `CancellationError` | 通常のキャンセル終了として解除する |
+| その他のエラー | 契約違反を報告し、解除する |
 
-業務エラーの回復・表示は operation 内で行う。漏れたエラーは、生存中の Store に設定された
-`onUnhandledError` observer へ `(ActionRun, ActionFailure)` として通知する。
-observer がなければ Debug で assertion を発生させ、Release では通知しない。
-Store 解放後に漏れたエラーも、observer がない場合と同じ扱いにする。
+報告には任意の `onUnhandledError` を使い、`ActionRun` と `ActionFailure` を渡す。
+通知先がない場合や Store の解放後は、Debug でアサーションを発生させ、Release では通知しない。
 
 ## 理由と制約
 
-保存失敗のアラートや retry の可否は業務状態である。ViewModel に判断を集めることで、
-利用者は表示と回復の経路を1か所で把握できる。observer はログ・計測・crash report の通知点とする。
+表示と回復の判断を ViewModel に集めることで、業務の状態遷移を一貫して定義できる。
+Store の通知先は、漏れたエラーをログ・計測・障害報告へ接続するための入口となる。
 
-observer は完了による追跡解除の前に MainActor で同期実行する。
-キャンセルにより追跡解除済みの run は、通知時にも追跡外である。
-Store は observer を保持するため、observer が Store の所有者に戻る場合は弱参照を使う。
+通知は MainActor 上で、完了による追跡解除より前に同期的に行う。
+キャンセルにより解除済みの追跡は復元しない。
+Store は通知先を保持するため、通知先から Store の所有者を参照する場合は弱参照を使う。

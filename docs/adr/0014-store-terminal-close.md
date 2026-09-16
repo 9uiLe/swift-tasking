@@ -1,26 +1,25 @@
-# ADR-0014: Store の終了処理で新規開始を先に停止する
+# ADR-0014: Store の終了待ちより前に受付を閉じる
 
 ## 前提
 
-MainActor は `waitForIdle()` の suspension 中に他の callback を実行できる。
-終了処理で新しい task を受け付けないためには、待機前に Store の受付状態を変える必要がある。
+MainActor は終了待ちの中断中にほかのコールバックを実行できる。
+所有者を終了するには、すべての開始経路に適用される受付状態が必要になる。
 
 ## 決定
 
-- `close()` は受付を恒久的に閉じる。冪等であり、所有中の task をキャンセルしない。
-- `cancelAndWaitForIdle()` は close と cancelAll を最初の suspension より前に行い、実終了を待つ。
-- `cancel` / `cancelAll` は受付を閉じない。
-- close 後の start は重複方針の判定前に `.skipped(.closed)` を返し、operation を実行しない。
-- Store の拒否理由は `TaskStartSkipReason` の `.alreadyRunning` / `.closed` とする。
-  Runner の `ActionSkipReason` は `.alreadyRunning` のみとする。
+- `close()` は受付を恒久的に閉じ、所有する処理はキャンセルしない。繰り返し呼んでも結果は変わらない。
+- `cancelAndWaitForIdle()` は最初の中断点より前に `close()` と `cancelAll()` を行い、実終了を待つ。
+- `cancel` と `cancelAll` は受付を開閉しない。
+- 閉鎖後の `start` は重複方針の判定前に `.skipped(.closed)` を返し、処理本体を呼ばない。
+- Store の拒否理由は `TaskStartSkipReason` の `.alreadyRunning` と `.closed` で表す。
 
 ## 理由と制約
 
-受付状態を Store 自身が持つことで、利用側が各 callback に終了フラグを配る必要がなくなる。
-close と cancel を分け、自然完了を待つ `close()` + `waitForIdle()` も表現する。
+Store 自身が受付を管理するため、終了フラグを各コールバックに配る必要がない。
+`close()` と `waitForIdle()` を組み合わせれば、受理済みの処理を自然に完了させることもできる。
 
-close 後は再 open しない。再利用には新しい Store を作る。
-同じ画面を再表示する場合の `onDisappear` では、対象の lifetime を cancel する。
+閉鎖後は再開せず、新しい所有期間には新しい Store を用意する。
+再表示する画面で同じ Store を使う場合は、非表示時に必要な寿命ラベルをキャンセルする。
+受付停止は対象を確定する操作であり、協調しない処理を強制終了させることはできない。
 
-受付停止は終了対象を確定するための操作であり、operation の強制停止を保証しない。
-キャンセルに協調しない operation が残れば、終了待ちも続く。
+Runner はタスクを所有せず、受付の閉鎖も持たない。その拒否理由は `ActionSkipReason.alreadyRunning` とする。
