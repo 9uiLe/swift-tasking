@@ -27,7 +27,7 @@ error handling, and retry decisions.
 Add the following dependency for the published package:
 
 ```swift
-.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.3.0")
+.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.4.0")
 ```
 
 Documentation at each revision describes that revision's API. Features listed

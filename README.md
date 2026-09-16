@@ -26,7 +26,7 @@ Tasking を使う場合も、進捗・結果・業務エラーの処理・再試
 公開済みの package を参照するには、次の依存を追加します。
 
 ```swift
-.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.3.0")
+.package(url: "https://github.com/9uiLe/swift-tasking.git", from: "0.4.0")
 ```
 
 各リビジョンの文書は、そのリビジョンの API を説明します。
