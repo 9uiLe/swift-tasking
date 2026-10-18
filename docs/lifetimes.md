@@ -1,106 +1,107 @@
 # 寿命と所有構成
 
-タスクを管理できる期間は、Store や Slot を保持する所有者の寿命で決まる。
-`ActionLifetime` は Store 内の実行を選ぶラベルであり、所有者の配置やキャンセルのイベントは
-アプリケーションが定義する。
+処理を管理できる期間は、Store / Slot を保持する所有者の寿命で決まる。
+まず所有者を配置し、その所有者の終了イベントをキャンセルや終了待ちへ接続する。
 
-## 所有者とラベルを対応させる
+## 管理したい期間に Store を置く
 
-| 処理を管理する範囲 | 所有者の例 | ラベル | 終了イベントの例 |
-|---|---|---|---|
-| 1つの画面 | View または画面用コンテナ | `.screenBound` | 画面の非表示 |
-| 1つのシーン | シーンのルート View またはコンテナ | `.sceneBound` | シーンの破棄 |
-| アプリ全体 | App が保持するコンテナ | `.appBound` | ログアウト、サービスの終了 |
-| 機能固有の処理群 | その処理を管理するコンテナ | 独自の文字列 | 機能の終了 |
+| 範囲 | 所有者の例 | 終了イベントの例 |
+|---|---|---|
+| 1つの画面 | View または画面用コンテナ | 画面の非表示 |
+| 1つのシーン | シーンのルート View またはコンテナ | シーンの破棄 |
+| 画面を越える処理 | App が保持するコンテナ | ログアウト、サービスの終了 |
+| 非 UI の差し替え可能な処理 | サービスが保持する Slot | サービスの終了 |
 
-`.appBound` を画面所有の Store に付けても、その Store の寿命は延びない。
-画面を閉じた後も同期を続けたい場合は、アプリケーション側で Store を保持する。
+標準 `.task` の寿命で足りる処理には Store を追加しない。
+Store が必要なら、通常は所有者ごとに分け、終了時は `cancelAll()` を使う。
 
-共有 Store への `cancel(lifetime:)` は、そのラベルを持つすべての追跡中の実行を対象にする。
-画面ごとにキャンセルを分ける場合は Store を分けるか、機能固有のラベルまたは `ActionRun` で選択する。
+## 画面の同期イベントから開始する
 
-## 画面の表示期間で管理する
-
-次の例は `SwiftUI` と `Tasking` を import した画面で使う。
-`SettingsViewModel` はアプリケーション側の型で、`save(cancellation:)` が表示状態と業務エラーを扱う。
-[SettingsFeature.swift](../Examples/TaskingPrototype/Sources/TaskingPrototype/SettingsFeature.swift) に完全な実装がある。
+次は `SwiftUI` と `Tasking` を import した画面の例である。
+`SettingsViewModel.save()` は表示状態・業務エラー・協調キャンセルを扱うアプリ側のメソッドである。
 
 ```swift
 @MainActor
 struct EditorView: View {
-    @State private var taskStore = ViewTaskStore()
+    @State private var store = ViewTaskStore()
     let viewModel: SettingsViewModel
 
     var body: some View {
         Button("保存") {
-            taskStore.start(id: EditorActions.save, lifetime: .screenBound) { [viewModel] cancellation in
-                try await viewModel.save(cancellation: cancellation)
+            store.start(id: "editor.save") { [viewModel] in
+                try await viewModel.save()
             }
         }
         .onDisappear {
-            taskStore.cancel(lifetime: .screenBound)
+            store.cancelAll()
         }
     }
 }
-
-private enum EditorActions {
-    static let save: ActionID = "editor.save"
-}
 ```
 
-非表示時は対象をキャンセルし、受付を開いたままにする。これにより、同じ Store を使う再表示でも開始を受け付ける。
-キャンセル済みの保存が終了する前に再開始する場合は、ViewModel 側で世代ガードを使う。
-`close()` は再開できない終端操作なので、所有者そのものを終了する際に使う。
+非表示時のキャンセルは受付を閉じないので、同じ Store を持つ画面を再表示できる。
+既定の `.ignoreNew` はキャンセル済みの保存が実終了するまで次の要求を拒否する。
+即時に差し替える場合だけ `.cancelExisting` を明示し、世代ガードや副作用の規則を設ける。
+`close()` は終端操作なので、所有者を恒久的に終了する際に使う。
 
-## シーンごとに管理する
+## シーンごとに所有を分ける
 
 `WindowGroup` の各ルート View に Store を保持すると、ウィンドウごとに所有を分けられる。
-子画面には、その Store または必要な操作だけを公開する同期ハンドラを渡す。
-シーンのルートが同じでも、独立した終了方針を持つ機能には別の Store を配置できる。
+子画面には必要な操作だけを公開する同期ハンドラを渡せる。
+同じルートに属する機能でも、終了方針が独立していれば別の Store を配置する。
 
-シーンの inactive 化と終了は区別する。システムダイアログや一時的なフォーカス喪失でも inactive になるため、
-その時点でキャンセルすべきかは処理の要件で決める。
-`scenePhase` を監視する場合は、どの状態変化をどのラベルのキャンセルへ接続するかを明示する。
+シーンの inactive 化と破棄を区別する。ダイアログや一時的なフォーカス喪失でも inactive になるため、
+キャンセルすべき状態変化は処理の要件で決める。処理自身が起こしたシステム表示で `scenePhase` が変化する場合もある。
 
-## アプリ全体で管理する
+## 画面を越えて継続する
 
-画面を越えて継続する処理は、Store と表示用の ViewModel をアプリ寿命のコンテナに配置する。
-画面はコンテナから同じ ViewModel を受け取り、進行中の処理の状態を表示する。
-[AppSyncFeature.swift](../Examples/TaskingPrototype/Sources/TaskingPrototype/AppSyncFeature.swift) では、
-`AppTaskContainer` が Store と `SyncViewModel` を所有している。
+Store と表示用 ViewModel をアプリ側のコンテナに保持する。
+画面は同じ ViewModel と同期ハンドラを受け取り、離脱後も続く処理の状態を、再表示時に参照できる。
+[AppSyncFeature.swift](../Examples/TaskingPrototype/Sources/TaskingPrototype/AppSyncFeature.swift) の `AppTaskContainer` が実装例である。
 
 ```mermaid
 flowchart LR
     App[アプリのコンテナ] --> Store[ViewTaskStore]
     App --> Model[共有 ViewModel]
     Screen[画面] --> Model
-    Screen -->|同期操作の開始| Store
+    Screen -->|同期ハンドラ| Store
     Store --> Work[タスク]
     Work -->|状態の更新| Model
 ```
 
-Store と一緒に ViewModel も保持すると、画面に戻った際に処理と表示の状態が一致する。
-実行中の処理が画面を強参照する構成は避ける。
+画面は同期の起点であり、タスクの所有者にはしない。画面の `onDisappear` ではこの Store をキャンセルしない。
+準備処理を1回だけ要求するなどの業務条件は、コンテナの準備状態として持つ。
+`.ignoreNew` は未終了の重複を防ぐ方針であり、終了後の再要求は受け付ける。
 
-アプリの準備を1回だけ要求する場合は、要求済みのフラグや準備状態をアプリ側で持つ。
-`.ignoreNew` は追跡中の重複を拒否する方針であり、完了後の再要求は受け付ける。
-失敗後の再試行も、アプリ側の状態遷移として定義する。
+## 部分集合が必要な場合だけグループを使う
 
-システムダイアログを表示する準備処理では、その表示で `scenePhase` が変化することがある。
-`.task(id: scenePhase)` に結び付けると、処理自身が起こした状態変化でキャンセルされ得る。
-状態変化を開始のきっかけにだけ使い、その後は継続する処理には、アプリ所有の Store が適する。
+`CancellationGroup` は同じ Store 内の追跡中の実行を選択するラベルである。
+画面・シーン・アプリの組込みラベルは持たない。たとえばアカウント切替時に一部だけキャンセルする場合に使う。
+以下は MainActor 上の同期ハンドラ内の断片で、`refreshProfile()` はアプリ側のエラー処理済み async メソッドである。
+
+```swift
+let accountGroup: CancellationGroup = "account"
+store.start(id: "account.profile", group: accountGroup) {
+    await refreshProfile()
+}
+store.cancel(group: accountGroup)
+```
+
+同じグループのキャンセルは、該当するすべての追跡中の実行に及ぶ。
+別々の所有者を同じラベルで表す代わりに、Store の分割を先に検討する。
+グループを付けても Store の寿命は延びず、OS のバックグラウンド実行権限も得られない。
 
 ## 所有者を終了する
 
 | 所有者の扱い | 操作 |
 |---|---|
-| 同じ所有者を引き続き使う | 必要な対象に `cancel` を要求する |
-| 新規受付を止め、受理済みの処理を完了させる | `close()` の後に `waitForIdle()` を呼ぶ |
-| 新規受付を止め、キャンセルを要求して終了を確認する | `cancelAndWaitForIdle()` を呼ぶ |
+| 同じ所有者を再利用 | 必要な対象に `cancel` / `cancelAll()` を要求 |
+| 新規受付を止め、受理済みを完了させる | `close()` の後に `waitForIdle()` |
+| 新規受付を止め、キャンセルして実終了を確認 | `cancelAndWaitForIdle()` |
 
-Store と Slot は解放時にもキャンセルを要求する。ただし、解放時点は参照関係で決まり、
-キャンセル要求は処理の強制終了ではない。明確な終了時点が必要なら、イベントから終了 API を呼ぶ。
-処理が所有者を強参照する場合の循環と対策は [利用レシピ](recipes.md#処理と所有者の参照関係を設計する) を参照する。
+Store と Slot は解放時もキャンセルを要求するが、参照関係によっては解放されない。
+明確な終了時点が必要なら終了イベントから API を呼ぶ。
+[参照構成](recipes.md#処理と所有者の参照関係を設計する) と [待機の契約](architecture.md#キャンセルと終了待ち) を確認する。
 
-`.appBound` は OS によるバックグラウンド実行の保証ではない。
-アプリの停止中やプロセス終了後まで継続させる要件には、OS のバックグラウンドタスクや転送 API を使う。
+プロセス停止中や終了後の継続には、要件に合う OS のバックグラウンドタスクや転送 API を使う。
+アプリ側の長い寿命は、その実行権限の代わりにはならない。

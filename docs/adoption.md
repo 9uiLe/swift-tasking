@@ -1,88 +1,74 @@
 # 導入と運用
 
-Tasking を機能へ組み込む際は、所有者・開始方針・状態更新・終了処理を一組として設計する。
-パッケージの依存指定と対応 OS は [README](../README.md#導入)、各型の契約は [アーキテクチャ](architecture.md) を参照する。
+Tasking を導入する際は、所有者・受付方針・状態更新・終了処理を一組として設計する。
+動作要件は [README](../README.md#導入)、厳密な公開契約は [アーキテクチャ](architecture.md) を参照する。
 
-## 1. 実行場所と所有者を決める
+## 1. 標準機能で寿命が表せるか確認する
 
-| 機能の入口 | 選ぶもの | 利用側が持つ責任 |
-|---|---|---|
-| 同期 UI コールバック | `Tasking.ViewTaskStore` | Store の配置、寿命ラベル、キャンセルのイベント |
-| MainActor 上の async 呼び出し | `Tasking.ActionRunner` | 呼び出し元のタスクの所有とキャンセル |
-| 非 UI サービスの差し替え可能な処理 | `TaskingCore.TaskSlot` | Slot の配置、結果の採用、サービス終了 |
+async 関数内の並行処理は `async let` / task group、表示や入力に連動する処理は `.task` / `.task(id:)` を使う。
+単一の async 操作の多重呼び出しは、ViewModel の状態ガードで表せるか確認する。
+同期イベントの外でハンドルを所有して終了を待つ必要があれば Store / Slot を選ぶ。
+複数の async 入口で Action 単位の受付を共有する場合は Runner を選べる。
 
-利用側の機能モジュールも Swift 6 言語モードにする。
-Swift 5 モードで import できても、クロージャの捕捉は利用側の規則で検査されるため、サポート条件を満たさない。
+## 2. 所有者と実行場所を決める
 
-Store と Runner は MainActor に隔離される。重い同期計算を置くと UI の時間を占有するため、
-計算を担当する actor や関数の隔離を確認する。`await` の記述だけでは実行場所は決まらない。
+Store と ViewModel は処理を管理・表示したい期間に合う所有者へ置く。
+非 UI の差し替え可能な処理はサービスに Slot を置く。
+通常は寿命ごとに Store を分ける。グループが必要なら、一括キャンセルの範囲を使う機能間で合意する。
+配置例は [寿命と所有構成](lifetimes.md) に示す。
 
-Slot は独立した actor で、タスクのハンドルを所有する。デバウンス、再試行、結果状態はサービスが持つ。
-パッケージは default actor isolation と `NonisolatedNonsendingByDefault` を有効にしない。
-コンパイラ設定や `@concurrent` などの指定を変える場合は、Swift tools の対応範囲と処理本体の実行場所を検証する。
+Store と Runner は MainActor に隔離される。重い同期処理は担当する actor や関数の隔離を見直す。
+`await` だけでは実行場所は変わらない。Swift tools 6.0 の対応範囲を保ち、
+`@concurrent` や default actor isolation などの採用には別途の互換性検証を行う。
 
-## 2. ActionID と開始方針を宣言する
+## 3. ActionID と受付方針を定める
 
-ActionID は、同じ Store または Runner 内で重複を判断する単位となる。
-共有 Store に複数の機能が `"sync"` を登録すると、一方の要求がもう一方の重複として扱われる。
-機能単位の名前空間と、対象ごとの識別子を使う。
+ActionID は同じ Store / Runner 内で共有される受付単位である。共有する場合は機能名や対象の識別子を含める。
+ID や方針の呼び出し箇所が多ければ、機能専用の同期ハンドラへ集約する。
 
 ```swift
 import Tasking
 
-enum BillingActions {
-    static let refreshPlans: ActionID = "billing.refreshPlans"
-    static let refreshPlansPolicy: TaskStartPolicy = .ignoreNew
-
-    static func downloadInvoice(_ invoiceID: String) -> ActionID {
-        ActionID("billing.downloadInvoice.\(invoiceID)")
+enum DownloadActions {
+    static func download(_ documentID: String) -> ActionID {
+        ActionID("documents.download.\(documentID)")
     }
 }
 ```
 
-同じ Action の開始方針は機能内で共有し、呼び出し箇所ごとに分散させない。
-入口が多い場合は、ID と方針を選択する同期ハンドラにまとめる。
-Runner では `ActionDescriptor` を使う。
+Store の既定 `.ignoreNew` は、キャンセル済みも含めた未終了の実行を拒否する。
+保存の実終了前に次の保存を始めないようにしたい場合は、この既定値を使う。
+旧処理の終了を待たずすぐ次を始める必要がある場合は `.cancelExisting` を明示する。
+スキップ理由は `.unfinished` / `.closed`。表示やログが必要なら受付結果を確認する。
+Runner は `.ignoreNew` / `.allowConcurrent` を持ち、重複拒否は外側の `nil` で表す。
 
-Store の開始結果は `.started(run)`、`.skipped(.alreadyRunning)`、`.skipped(.closed)` のいずれかである。
-開始がスキップされた場合に必要な表示やログを、利用側で決める。
+## 4. 業務状態とキャンセル協調を定義する
 
-## 3. 寿命と表示状態を合わせる
+`Task.checkCancellation()` / `Task.isCancelled` と対応 API で、世代や表示状態を変える前・中断後・副作用の前などに終了を判断する。
+キャンセル時に元の表示へ戻すか、結果を残すかを ViewModel の状態遷移として定義する。
+重なる処理では、結果・エラー・後処理を世代で保護する。
+大量の入力は開始前のデバウンスや集約を検討する。具体例は [利用レシピ](recipes.md) を参照する。
 
-Store と ViewModel は、その処理を管理・表示したい期間に合う所有者へ配置する。
-共有 Store を使う場合は、ラベルによる一括キャンセルの範囲を利用する機能間で合意する。
-配置例は [寿命と所有構成](lifetimes.md) を参照する。
+## 5. 終了処理と診断を接続する
 
-処理本体は長い処理や重要な中断点の前後でキャンセルを確認する。
-読み込み中・成功・失敗・キャンセルの状態遷移を ViewModel に定義し、実行が重なる場合は世代ガードを使う。
-手動キャンセル後は、`.ignoreNew` でも前の処理が終わる前に再開始できる。
+再表示する画面のキャンセルには `cancelAll()`、所有者の終了には `cancelAndWaitForIdle()` を使う。
+受理済みの自然完了を待つ場合は `close()` と `waitForIdle()` を組み合わせる。
+待機側のキャンセルは処理へ伝播せず、待機も中断しない。終了しない処理を強制停止する機能はない。
 
-バックグラウンドでの完遂が必要な処理には、`beginBackgroundTask`、`BGTaskScheduler`、
-バックグラウンド `URLSession` など、要件に合う OS API を選ぶ。
-`.appBound` はその実行権限を与えない。
+Store の `onUnhandledError` へ、処理本体から漏れた元のエラーを受け取る診断を接続する。
+業務上の回復と表示は処理本体で行い、通知先から所有者へ戻る参照は弱参照を使う。
+通知先がない場合や Store 解放後の漏れは Debug でアサーション、Release では通知しない。
+OS による停止を越える完遂には、要件に合うバックグラウンドタスクや転送 API を別途使う。
 
-## 4. 終了処理と診断を接続する
+## 6. 機能として検証する
 
-同じ所有者を再利用するキャンセルと、所有者を終了する操作を分ける。
-再表示する画面では `cancel(lifetime:)`、所有者の終了では `cancelAndWaitForIdle()` を使う。
-受理済みの処理を完了させる場合は `close()` と `waitForIdle()` を組み合わせる。
+- 同じ要求の連続呼び出しが受付方針に従い、キャンセル直後も未終了の副作用を重ねない。
+- 処理本体がキャンセルを観測し、実終了時に表示状態を復旧する。
+- 古い処理の結果や後処理が新しい状態を上書きしない。
+- 所有者の終了時は新規受付を止め、キャンセル済みを含む全処理の終了を待つ。
+- 画面離脱後に継続する処理と、終了する処理を確認し、不要な参照を残さない。
 
-Store の `onUnhandledError` は、処理本体から漏れた `CancellationError` 以外のエラーの通知点である。
-アプリの依存を組み立てる場所でログや障害報告へ接続する。
-業務エラーの回復と表示は処理本体で行い、通知先から所有者に戻る参照には弱参照を使う。
-通知先がない場合は Debug でアサーションが発生し、Release では通知されない。
-
-## 5. 機能の契約を検証する
-
-- 同じ Action の連続呼び出しが、定めた開始方針に従う。
-- キャンセルを処理本体が観測し、表示状態を復旧する。
-- 古い処理の完了や後処理が、新しい状態を上書きしない。
-- 所有者の終了時には新規受付を止め、キャンセル済みの処理も含めて終了を確認する。
-- 画面を閉じた後や所有者を解放した後に、不要な参照が残らない。
-
-業務結果は ViewModel の状態や業務イベントから確認し、タスクの終了は完了待ち API から確認する。
-テストと CI の実行方法は [コントリビューションガイド](../CONTRIBUTING.md) に定める。
-大量の開始や照会がある機能では、[性能特性](performance.md) に沿って件数・ID 分布・一致率・未終了タスク数を測る。
-
-公開には必要な API を含む SemVer タグを使う。
-配布担当者は [リリース設計と運用](releasing.md) の準備・検証・公開手順に従う。
+業務結果は状態やイベント、タスクの終了は完了待ち API で確認する。
+[コントリビューションガイド](../CONTRIBUTING.md) の検証を行い、大量の開始や照会には
+[性能特性](performance.md) に沿って負荷・未終了数・MainActor の占有を測る。
+配布は [リリース設計と運用](releasing.md) の準備・検証・公開手順に従う。

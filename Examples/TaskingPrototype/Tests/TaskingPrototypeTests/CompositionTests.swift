@@ -7,17 +7,20 @@ import Testing
 struct CompositionTests {
     @Test func billingDeduplicatesAsyncEntryPointsWithoutChangingLoadingState() async {
         let gate = OperationGate()
+        var calls = 0
         let model = BillingViewModel(fetchPlans: {
+            calls += 1
             await gate.wait()
             return ["Pro"]
         })
-        async let first = model.refresh()
+        async let first: Void = model.refresh()
         await gate.waitForArrivals()
         #expect(model.loadState == .loading)
-        #expect(await model.refresh() == .skipped(.alreadyRunning))
+        await model.refresh()
+        #expect(calls == 1)
         #expect(model.loadState == .loading)
         gate.open()
-        #expect(await first == .succeeded(["Pro"]))
+        await first
         #expect(model.loadState == .loaded(["Pro"]))
     }
 
@@ -34,35 +37,42 @@ struct CompositionTests {
         let refresh = Task { await model.refresh() }
         await gate.waitForArrivals()
         refresh.cancel()
+        await model.refresh()
+        #expect(calls == (previouslyLoaded ? 2 : 1))
+        #expect(model.loadState == .loading)
         gate.open()
-        #expect(await refresh.value == .cancelled)
+        await refresh.value
         #expect(model.loadState == (previouslyLoaded ? .loaded(["Pro"]) : .initial))
     }
 
     @Test func billingPublishesBusinessFailure() async {
         let model = BillingViewModel(fetchPlans: { throw ServiceError.offline })
-        #expect(await model.refresh() == .failed(ActionFailure(error: ServiceError.offline)))
+        await model.refresh()
         #expect(model.loadState == .failed("offline"))
     }
 
-    @Test func runnerInsideStoreKeepsStoreCancellationContext() async {
+    @Test func runnerInsideStoreKeepsTaskCancellation() async {
         let gate = OperationGate()
         let store = ViewTaskStore()
         let runner = ActionRunner()
-        var outcome: ActionOutcome<String>?
-        store.start(id: "composite", lifetime: .screenBound) { _ in
-            outcome = await runner.run(ActionDescriptor(id: "inner")) { c in
-                await gate.wait()
-                try c.check()
-                return "finished"
+        var cancelled = false
+        store.start(id: "composite") {
+            do {
+                _ = try await runner.run(id: "inner") {
+                    await gate.wait()
+                    try Task.checkCancellation()
+                    return "finished"
+                }
+            } catch is CancellationError {
+                cancelled = true
             }
         }
         await gate.waitForArrivals()
         store.cancelAll()
         gate.open()
         await store.waitForIdle()
-        #expect(outcome == .cancelled)
-        #expect(!runner.isRunning(id: "inner"))
+        #expect(cancelled)
+        #expect(!runner.isTracked(id: "inner"))
     }
 
     @Test func itemDownloadsHaveIndependentAdmissionAndCancellation() async throws {
@@ -72,18 +82,18 @@ struct CompositionTests {
             await (item == "a" ? first : second).wait()
         })
         let store = ViewTaskStore()
-        let runA = try #require(store.start(id: DownloadAction.item("a"), lifetime: .screenBound) { c in
-            try await model.download(itemID: "a", cancellation: c)
+        let runA = try #require(store.start(id: DownloadAction.item("a")) {
+            try await model.download(itemID: "a")
         }.run)
-        store.start(id: DownloadAction.item("b"), lifetime: .screenBound) { c in
-            try await model.download(itemID: "b", cancellation: c)
+        store.start(id: DownloadAction.item("b")) {
+            try await model.download(itemID: "b")
         }
         await first.waitForArrivals()
         await second.waitForArrivals()
-        let duplicate = store.start(id: DownloadAction.item("a"), lifetime: .screenBound) { _ in
+        let duplicate = store.start(id: DownloadAction.item("a")) {
             Issue.record("重複したダウンロードが実行されました。")
         }
-        #expect(duplicate.skipReason == .alreadyRunning)
+        #expect(duplicate.skipReason == .unfinished)
         store.cancel(runA)
         first.open()
         await store.awaitCompletion(of: runA)
@@ -94,16 +104,17 @@ struct CompositionTests {
         #expect(model.state(of: "b") == .done)
     }
 
-    @Test func appOwnedSyncSurvivesScreenLifetimeCancellation() async {
+    @Test func appOwnedSyncSurvivesScreenOwnedStoreCancellation() async {
         let gate = OperationGate()
         let container = AppTaskContainer(syncViewModel: SyncViewModel(performSync: { await gate.wait() }))
+        let screenStore = ViewTaskStore()
         let model = container.syncViewModel
-        container.store.start(id: SyncAction.fullSync, lifetime: .appBound) { c in
-            try await model.sync(cancellation: c)
+        container.store.start(id: SyncAction.fullSync) {
+            try await model.sync()
         }
         await gate.waitForArrivals()
-        container.store.cancel(lifetime: .screenBound)
-        #expect(container.store.isRunning(id: SyncAction.fullSync))
+        screenStore.cancelAll()
+        #expect(container.store.isTracked(id: SyncAction.fullSync))
         #expect(model.syncState == .syncing)
         gate.open()
         await container.store.waitForIdle()

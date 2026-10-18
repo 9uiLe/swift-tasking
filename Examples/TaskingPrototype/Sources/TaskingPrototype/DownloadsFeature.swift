@@ -37,7 +37,8 @@ public final class DownloadsViewModel {
         states[itemID] ?? .idle
     }
 
-    public func download(itemID: String, cancellation: CancellationContext) async throws {
+    public func download(itemID: String) async throws {
+        try Task.checkCancellation()
         let download = UUID()
         latestDownloads[itemID] = download
         defer {
@@ -45,9 +46,8 @@ public final class DownloadsViewModel {
         }
         states[itemID] = .downloading
         do {
-            try cancellation.check()
             try await performDownload(itemID)
-            try cancellation.check()
+            try Task.checkCancellation()
             guard latestDownloads[itemID] == download else { return }
             states[itemID] = .done
         } catch let error as CancellationError {
@@ -78,10 +78,9 @@ public struct DownloadsScreen: View {
                     Button("ダウンロード") {
                         taskStore.start(
                             id: DownloadAction.item(itemID),
-                            lifetime: .screenBound,
                             policy: .ignoreNew
-                        ) { [viewModel] cancellation in
-                            try await viewModel.download(itemID: itemID, cancellation: cancellation)
+                        ) { [viewModel] in
+                            try await viewModel.download(itemID: itemID)
                         }
                     }
                 case .downloading:
@@ -96,7 +95,7 @@ public struct DownloadsScreen: View {
             }
         }
         .onDisappear {
-            taskStore.cancel(lifetime: .screenBound)
+            taskStore.cancelAll()
         }
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 
 /// ユーザー操作やライフサイクルイベントから始まる Action の種類を識別する安定した ID。
 ///
-/// 呼び出し箇所に文字列リテラルを直接書かず、機能ごとの名前空間に定数として宣言する。
+/// 複数の入口や機能で共有する ID は、機能ごとの名前空間に定数として宣言する。
 public struct ActionID: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
     public let rawValue: String
 
@@ -45,9 +45,4 @@ public struct ActionRun: Hashable, Sendable {
         self.actionID = actionID
         self.runID = runID
     }
-}
-
-/// `ActionRunner` が Action の実行を受け付けなかった理由。
-public enum ActionSkipReason: Equatable, Sendable {
-    case alreadyRunning
 }

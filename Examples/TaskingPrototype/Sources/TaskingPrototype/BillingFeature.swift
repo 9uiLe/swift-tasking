@@ -1,10 +1,4 @@
 import SwiftUI
-import Tasking
-
-/// 課金処理は呼び出し元の async コンテキストで直接実行する。
-enum BillingAction {
-    static let refresh = ActionID("billing.refresh")
-}
 
 @MainActor
 @Observable
@@ -17,8 +11,6 @@ public final class BillingViewModel {
     }
 
     public private(set) var loadState: LoadState = .initial
-
-    private let runner = ActionRunner()
     private let fetchPlans: @MainActor @Sendable () async throws -> [String]
 
     public init(
@@ -30,32 +22,22 @@ public final class BillingViewModel {
         self.fetchPlans = fetchPlans
     }
 
-    @discardableResult
-    public func refresh() async -> ActionOutcome<[String]> {
+    /// 初回表示と手動更新は同じ状態を共有し、先行する更新の終了まで重複を受け付けない。
+    /// キャンセル時は、処理の実終了後に更新前の表示状態へ戻す。
+    public func refresh() async {
+        guard !Task.isCancelled else { return }
+        guard loadState != .loading else { return }
         let previousState = loadState
-        let outcome = await runner.run(
-            ActionDescriptor(id: BillingAction.refresh, duplicatePolicy: .ignoreNew),
-            onStart: { _ in
-                loadState = .loading
-            }
-        ) { [fetchPlans] cancellation -> [String] in
-            try cancellation.check()
+        loadState = .loading
+        do {
             let plans = try await fetchPlans()
-            try cancellation.check()
-            return plans
-        }
-
-        switch outcome {
-        case let .succeeded(plans):
+            try Task.checkCancellation()
             loadState = .loaded(plans)
-        case .cancelled:
+        } catch is CancellationError {
             loadState = previousState
-        case .skipped(.alreadyRunning):
-            break
-        case let .failed(failure):
-            loadState = .failed(failure.message)
+        } catch {
+            loadState = .failed(String(describing: error))
         }
-        return outcome
     }
 }
 
@@ -82,11 +64,9 @@ public struct BillingScreen: View {
             }
         }
         .task {
-            // 初回ロード。view が消えればこの構造化 task ごとキャンセルされる。
             await viewModel.refresh()
         }
         .refreshable {
-            // 初回ロード中に引っ張られたら .skipped(.alreadyRunning) になる。
             await viewModel.refresh()
         }
     }

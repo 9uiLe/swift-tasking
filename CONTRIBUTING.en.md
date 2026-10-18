@@ -11,14 +11,14 @@ and reliable cancellation and completion waits. The code is available under the
 
 Read [purpose and principles](docs/positioning.md), the [glossary](docs/glossary.md),
 and the [architecture](docs/architecture.md) to identify the affected responsibility
-and public contract. The [decision index](docs/README.md#設計判断adr) links to design
-rationale. These design documents are maintained in Japanese.
+and public contract. Keep durable rationale alongside current contracts in their
+authoritative documents. These design documents are maintained in Japanese.
 
 | Information | Where it belongs |
 |---|---|
 | How behavior is implemented | Code names, types, control flow, and module boundaries |
 | Observable behavior | Public API documentation comments and tests |
-| Durable design rationale | `docs/adr/` |
+| Durable design rationale | The authoritative document for the responsibility, such as `docs/architecture.md` |
 | Problems, motivation, and context specific to one change | Commit messages |
 | Constraints or reasons to reject alternatives that code cannot express | Implementation comments |
 
@@ -64,7 +64,7 @@ command names, and stable CI check names in their established form. Preserve the
 original MIT license text.
 
 README, this guide, and the security policy have Japanese sources and English
-`.en.md` editions; update each pair together. Design documents, ADRs, the changelog,
+`.en.md` editions; update each pair together. Design documents, the changelog,
 and operating guides are maintained in Japanese. Both READMEs must describe the
 same API, examples, requirements, and installation version.
 

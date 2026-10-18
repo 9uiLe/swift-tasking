@@ -5,12 +5,101 @@ import Testing
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct FeatureStateTests {
+    @Test(arguments: ["old", ""])
+    func cancelledSearchEntryCannotReplaceLatestSearch(term: String) async throws {
+        let oldEntry = OperationGate()
+        let latestService = OperationGate()
+        let model = SearchViewModel(performSearch: { term in
+            await latestService.wait()
+            return [term]
+        })
+        let old = Task {
+            await oldEntry.wait()
+            try await model.search(term: term)
+        }
+        await oldEntry.waitForArrivals()
+        old.cancel()
+        let latest = Task { try await model.search(term: "latest") }
+        await latestService.waitForArrivals()
+
+        oldEntry.open()
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(model.isSearching)
+        latestService.open()
+        try await latest.value
+        #expect(model.results == ["latest"])
+        #expect(!model.isSearching)
+    }
+
+    @Test func cancelledSaveEntryCannotReplaceLatestSave() async throws {
+        let oldEntry = OperationGate()
+        let latestService = OperationGate()
+        let model = SettingsViewModel(performSave: { await latestService.wait() })
+        let old = Task {
+            await oldEntry.wait()
+            try await model.save()
+        }
+        await oldEntry.waitForArrivals()
+        old.cancel()
+        let latest = Task { try await model.save() }
+        await latestService.waitForArrivals()
+
+        oldEntry.open()
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(model.saveState == .saving)
+        latestService.open()
+        try await latest.value
+        #expect(model.saveState == .saved)
+    }
+
+    @Test func cancelledDownloadEntryCannotReplaceLatestDownload() async throws {
+        let oldEntry = OperationGate()
+        let latestService = OperationGate()
+        let model = DownloadsViewModel(performDownload: { _ in await latestService.wait() })
+        let old = Task {
+            await oldEntry.wait()
+            try await model.download(itemID: "report")
+        }
+        await oldEntry.waitForArrivals()
+        old.cancel()
+        let latest = Task { try await model.download(itemID: "report") }
+        await latestService.waitForArrivals()
+
+        oldEntry.open()
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(model.state(of: "report") == .downloading)
+        latestService.open()
+        try await latest.value
+        #expect(model.state(of: "report") == .done)
+    }
+
+    @Test func cancelledSyncEntryCannotReplaceLatestSync() async throws {
+        let oldEntry = OperationGate()
+        let latestService = OperationGate()
+        let model = SyncViewModel(performSync: { await latestService.wait() })
+        let old = Task {
+            await oldEntry.wait()
+            try await model.sync()
+        }
+        await oldEntry.waitForArrivals()
+        old.cancel()
+        let latest = Task { try await model.sync() }
+        await latestService.waitForArrivals()
+
+        oldEntry.open()
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(model.syncState == .syncing)
+        latestService.open()
+        try await latest.value
+        #expect(model.syncState == .finished)
+    }
+
     @Test func cancellingSaveResetsLoadingAfterActualCompletion() async {
         let gate = OperationGate()
         let store = ViewTaskStore()
         let model = SettingsViewModel(performSave: { await gate.wait() })
-        store.start(id: SettingsAction.save, lifetime: .screenBound) { c in
-            try await model.save(cancellation: c)
+        store.start(id: SettingsAction.save) {
+            try await model.save()
         }
         await gate.waitForArrivals()
         #expect(model.saveState == .saving)
@@ -35,13 +124,13 @@ struct FeatureStateTests {
                 await latest.wait()
             }
         })
-        let oldRun = try #require(store.start(id: SettingsAction.save, lifetime: .screenBound) { c in
-            try await model.save(cancellation: c)
+        let oldRun = try #require(store.start(id: SettingsAction.save) {
+            try await model.save()
         }.run)
         await old.waitForArrivals()
         store.cancel(oldRun)
-        store.start(id: SettingsAction.save, lifetime: .screenBound) { c in
-            try await model.save(cancellation: c)
+        store.start(id: SettingsAction.save, policy: .cancelExisting) {
+            try await model.save()
         }
         await latest.waitForArrivals()
         old.open()
@@ -55,25 +144,21 @@ struct FeatureStateTests {
     @Test func replacementSearchKeepsLoadingUntilLatestFinishes() async throws {
         let old = OperationGate()
         let latest = OperationGate()
-        let store = ViewTaskStore()
         let model = SearchViewModel(performSearch: { term in
             await (term == "old" ? old : latest).wait()
             return [term]
         })
-        let oldRun = try #require(store.start(id: SearchAction.query, lifetime: .screenBound) { c in
-            try await model.search(term: "old", cancellation: c)
-        }.run)
+        let first = Task { try await model.search(term: "old") }
         await old.waitForArrivals()
-        store.start(id: SearchAction.query, lifetime: .screenBound, policy: .cancelExisting) { c in
-            try await model.search(term: "latest", cancellation: c)
-        }
+        first.cancel()
+        let replacement = Task { try await model.search(term: "latest") }
         await latest.waitForArrivals()
         old.open()
-        await store.awaitCompletion(of: oldRun)
+        _ = await first.result
         #expect(model.isSearching)
         #expect(model.results.isEmpty)
         latest.open()
-        await store.waitForIdle()
+        try await replacement.value
         #expect(!model.isSearching)
         #expect(model.results == ["latest"])
     }
@@ -88,9 +173,9 @@ struct FeatureStateTests {
             }
             return [term]
         })
-        async let first: Void = model.search(term: "old", cancellation: CancellationContext())
+        async let first: Void = model.search(term: "old")
         await old.waitForArrivals()
-        try await model.search(term: "latest", cancellation: CancellationContext())
+        try await model.search(term: "latest")
         old.open()
         try await first
         #expect(model.results == ["latest"])
@@ -98,15 +183,55 @@ struct FeatureStateTests {
         #expect(!model.isSearching)
     }
 
-    @Test func searchHandlesBusinessFailureBeforeItReachesStore() async {
+    @Test func searchHandlesBusinessFailure() async throws {
         let model = SearchViewModel(performSearch: { _ in throw ServiceError.offline })
-        let store = ViewTaskStore { _, _ in Issue.record("業務上のエラーが ViewModel の外へ漏れました。") }
-        store.start(id: SearchAction.query, lifetime: .screenBound) { c in
-            try await model.search(term: "query", cancellation: c)
-        }
-        await store.waitForIdle()
+        try await model.search(term: "query")
         #expect(model.errorMessage == "offline")
         #expect(!model.isSearching)
+    }
+
+    @Test func cancelledDebounceDoesNotStartSearch() async throws {
+        var searched: [String] = []
+        let model = SearchViewModel(performSearch: { term in
+            searched.append(term)
+            return [term]
+        })
+        let pending = Task { try await model.search(term: "old", debounce: .seconds(30)) }
+        while !model.isSearching { await Task.yield() }
+        pending.cancel()
+        _ = await pending.result
+        #expect(searched.isEmpty)
+        try await model.search(term: "latest")
+        #expect(searched == ["latest"])
+        #expect(model.results == ["latest"])
+    }
+
+    @Test func emptySearchClearsResultsAndInvalidatesOlderRequest() async throws {
+        let old = OperationGate()
+        var searched: [String] = []
+        let model = SearchViewModel(performSearch: { term in
+            searched.append(term)
+            if term == "old" { await old.wait() }
+            return [term]
+        })
+        try await model.search(term: "")
+        #expect(searched.isEmpty)
+        try await model.search(term: "first")
+        let pending = Task { try await model.search(term: "old") }
+        await old.waitForArrivals()
+        try await model.search(term: "")
+        old.open()
+        try await pending.value
+        #expect(model.results.isEmpty)
+        #expect(model.errorMessage == nil)
+        #expect(!model.isSearching)
+    }
+
+    @Test func actorOwnedIndexReturnsResultsToMainActorModel() async throws {
+        let index = SearchIndex(entries: ["Actor", "Task", "actor isolation"])
+        let model = SearchViewModel(performSearch: { term in try await index.search(term) })
+        try await model.search(term: "ACTOR")
+        #expect(model.results == ["Actor", "actor isolation"])
     }
 
     @Test func cancelledDownloadCleanupCannotResetItsReplacement() async throws {
@@ -119,13 +244,13 @@ struct FeatureStateTests {
             await (calls == 1 ? old : latest).wait()
         })
         let id = DownloadAction.item("report")
-        let oldRun = try #require(store.start(id: id, lifetime: .screenBound) { c in
-            try await model.download(itemID: "report", cancellation: c)
+        let oldRun = try #require(store.start(id: id) {
+            try await model.download(itemID: "report")
         }.run)
         await old.waitForArrivals()
         store.cancel(id: id)
-        store.start(id: id, lifetime: .screenBound) { c in
-            try await model.download(itemID: "report", cancellation: c)
+        store.start(id: id, policy: .cancelExisting) {
+            try await model.download(itemID: "report")
         }
         await latest.waitForArrivals()
         old.open()
@@ -140,8 +265,8 @@ struct FeatureStateTests {
         let gate = OperationGate()
         let model = SyncViewModel(performSync: { await gate.wait() })
         let store = ViewTaskStore()
-        store.start(id: SyncAction.fullSync, lifetime: .appBound) { c in
-            try await model.sync(cancellation: c)
+        store.start(id: SyncAction.fullSync) {
+            try await model.sync()
         }
         await gate.waitForArrivals()
         store.cancelAll()

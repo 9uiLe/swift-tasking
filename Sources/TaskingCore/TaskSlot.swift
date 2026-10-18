@@ -1,4 +1,4 @@
-/// UI の分離領域の外で、アクティブな非構造化タスクを1つ所有する。
+/// UI の分離領域の外で、差し替え可能な非構造化タスクを所有する。
 ///
 /// 差し替えとキャンセルでは協調キャンセルを要求する。差し替えた処理も終了まで所有するため、
 /// `waitForIdle()` はその処理の終了も待つ。
@@ -16,12 +16,12 @@ public actor TaskSlot {
 
     /// アクティブなタスクをキャンセルして代わりのタスクを開始する。受付の閉鎖後は `false` を返す。
     ///
-    /// 処理は重要な中断点でキャンセルコンテキストを確認すること。
+    /// 処理は `Task.isCancelled` など標準 Swift のキャンセル API で協調すること。
     /// 優先度は `Task` に渡し、`nil` なら呼び出し元の優先度を継承する。
     @discardableResult
     public func replace(
         priority: TaskPriority? = nil,
-        operation: @escaping @Sendable (CancellationContext) async -> Void
+        operation: @escaping @Sendable () async -> Void
     ) -> Bool {
         guard !isClosed else { return false }
         cancel()
@@ -31,7 +31,7 @@ public actor TaskSlot {
         // ここで Slot を保持すると、deinit によるキャンセルが働かなくなる。
         let handle = Task(priority: priority) { [weak self] in
             await TaskOwnership.$current.withValue(context) {
-                await operation(CancellationContext())
+                await operation()
             }
             await self?.finish(ownership)
         }

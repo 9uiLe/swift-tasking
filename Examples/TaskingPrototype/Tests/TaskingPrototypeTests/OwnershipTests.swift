@@ -13,13 +13,13 @@ struct OwnershipTests {
         var survivors = 0
         var completed = 0
         for _ in 0..<100 {
-            store.start(id: "replace", lifetime: .screenBound, policy: .cancelExisting) { [payload] c in
+            store.start(id: "replace", policy: .cancelExisting) { [payload] in
                 await gate.wait()
                 #expect(payload != nil)
-                if !c.isCancelled { survivors += 1 }
+                if !Task.isCancelled { survivors += 1 }
                 completed += 1
             }
-            #expect(store.runningCount(for: "replace") == 1)
+            #expect(store.trackedCount(for: "replace") == 1)
         }
         payload = nil
         #expect(weakPayload != nil)
@@ -28,19 +28,19 @@ struct OwnershipTests {
         #expect(completed == 100)
         #expect(survivors == 1)
         #expect(weakPayload == nil)
-        #expect(!store.isRunning(id: "replace"))
-        #expect(!store.isRunning(lifetime: .screenBound))
+        #expect(!store.isTracked(id: "replace"))
+        #expect(store.unfinishedCount == 0)
     }
 
     @Test func cancellingFromInsideOperationKeepsTrackingConsistent() async {
         let store = ViewTaskStore()
-        store.start(id: "self", lifetime: .screenBound) { c in
+        store.start(id: "self") {
             store.cancel(id: "self")
-            #expect(!store.isRunning(id: "self"))
-            #expect(c.isCancelled)
+            #expect(!store.isTracked(id: "self"))
+            #expect(Task.isCancelled)
         }
         await store.waitForIdle()
-        #expect(store.runningCount(for: "self") == 0)
+        #expect(store.trackedCount(for: "self") == 0)
     }
 
     @Test func finalStoreReferenceCanBeReleasedOffMainActorDuringCompletion() async {
@@ -50,7 +50,7 @@ struct OwnershipTests {
             defer { weakStore = nil }
             let gate = OperationGate()
             for _ in 0..<4 {
-                store?.start(id: "work", lifetime: .screenBound, policy: .allowConcurrent) { _ in
+                store?.start(id: "work", policy: .allowConcurrent) {
                     await gate.wait()
                 }
             }

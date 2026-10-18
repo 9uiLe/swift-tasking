@@ -4,3 +4,4 @@ DerivedData/
 .tokensave/
 Benchmarks/results/
 __pycache__/
+/.moletta-runs/

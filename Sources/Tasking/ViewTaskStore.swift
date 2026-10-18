@@ -2,26 +2,32 @@ import TaskingCore
 
 /// MainActor 上の同期 UI コールバックから開始する非構造化タスクを所有する。
 ///
-/// 寿命ラベルと重複ポリシーは追跡中の実行に適用する。キャンセルすると直ちに追跡から外すが、
-/// タスクのハンドルは実際に終了するまで所有する。
+/// キャンセルすると直ちに追跡から外すが、タスクのハンドルは実際に終了するまで所有する。
+/// 既定の受付方針は、キャンセル済みも含む同じ Action ID の未終了処理があれば新規要求を拒否する。
 /// 実行状態の照会は同期的なスナップショットであり、監視可能な UI 状態ではない。
 /// 読み込み状態や結果は ViewModel が所有する。処理から Store やその所有者を強参照してはならない。
 @MainActor
 public final class ViewTaskStore {
-    private var runs = ActionRuns<ActionLifetime>()
+    private struct Tracking {
+        let group: CancellationGroup?
+    }
+
+    private var runs = ActionRuns<Tracking>()
     private var tasks = OwnedTasks<ActionRun>()
+    private var unfinishedCounts: [ActionID: Int] = [:]
     private var isClosed = false
-    private let onUnhandledError: (@MainActor (ActionRun, ActionFailure) -> Void)?
+    private let onUnhandledError: (@MainActor (ActionRun, any Error) -> Void)?
 
     /// 処理の契約違反を受け取る任意の通知先を指定して Store を作成する。
     ///
     /// 業務上のエラーは処理の外に漏らさず、ViewModel の状態に変換する。
+    /// 通知先には、送出された元のエラーを型を変えずに渡す。
     /// 通知先は、完了による追跡の除去より前に呼ばれる。キャンセル済みの実行は既に追跡対象外である。
     /// 通知先がなければ、漏れたエラーは Debug のアサーション対象になる。
     /// Store の解放後のエラーにも同じアサーションの扱いを適用する。
     /// Store は通知先を保持するため、Store の所有者は弱参照で捕捉する。
     public init(
-        onUnhandledError: (@MainActor (ActionRun, ActionFailure) -> Void)? = nil
+        onUnhandledError: (@MainActor (ActionRun, any Error) -> Void)? = nil
     ) {
         self.onUnhandledError = onUnhandledError
     }
@@ -32,23 +38,23 @@ public final class ViewTaskStore {
 
     /// 重複ポリシーまたは受付の終端状態により拒否されなければ、処理を開始する。
     ///
-    /// 処理を開始する前に実行を追跡に追加する。重要な中断点で `cancellation.check()` を呼び、
+    /// 処理を開始する前に実行を追跡に追加する。重要な中断点で `Task.checkCancellation()` を呼び、
     /// キャンセル要求に協調すること。`CancellationError` は通常の終了として扱う。
     /// 業務上のエラーは ViewModel で処理する。それ以外の漏れたエラーは通知先に報告するか、
     /// Debug のアサーション対象になる。
     @discardableResult
     public func start(
         id: ActionID,
-        lifetime: ActionLifetime,
+        group: CancellationGroup? = nil,
         policy: TaskStartPolicy = .ignoreNew,
         priority: TaskPriority? = nil,
-        operation: @escaping @MainActor @Sendable (CancellationContext) async throws -> Void
+        operation: @escaping @MainActor @Sendable () async throws -> Void
     ) -> TaskStartOutcome {
         guard !isClosed else { return .skipped(.closed) }
 
         switch policy {
-        case .ignoreNew where isRunning(id: id):
-            return .skipped(.alreadyRunning)
+        case .ignoreNew where unfinishedCount(for: id) > 0:
+            return .skipped(.unfinished)
         case .cancelExisting:
             cancel(id: id)
         case .ignoreNew, .allowConcurrent:
@@ -64,17 +70,16 @@ public final class ViewTaskStore {
             await TaskOwnership.$current.withValue(context) {
                 defer { self?.finish(run) }
                 do {
-                    try await operation(CancellationContext())
+                    try await operation()
                 } catch is CancellationError {
                     return
                 } catch {
-                    let failure = ActionFailure(error: error)
                     if let observer = self?.onUnhandledError {
-                        observer(run, failure)
+                        observer(run, error)
                     } else {
                         assertionFailure(
                             "ViewTaskStore の処理で未処理のエラーが発生しました: "
-                                + "\(failure.typeName): \(failure.message)"
+                                + "\(String(reflecting: type(of: error))): \(error)"
                         )
                     }
                 }
@@ -82,7 +87,8 @@ public final class ViewTaskStore {
         }
 
         tasks.insert(handle, for: run, ownership: ownership)
-        runs.insert(run, metadata: lifetime)
+        runs.insert(run, metadata: Tracking(group: group))
+        unfinishedCounts[id, default: 0] += 1
         return .started(run)
     }
 
@@ -98,9 +104,10 @@ public final class ViewTaskStore {
         tasks.cancel(run)
     }
 
-    /// この寿命ラベルの実行にキャンセルを要求し、直ちに追跡から外す。
-    public func cancel(lifetime: ActionLifetime) {
-        for run in runs.runs(matching: { $0 == lifetime }) { cancel(run) }
+    /// このグループの追跡中の実行にキャンセルを要求し、直ちに追跡から外す。
+    /// ラベルのない実行は対象にならない。
+    public func cancel(group: CancellationGroup) {
+        for run in runs.runs(matching: { $0.group == group }) { cancel(run) }
     }
 
     /// 所有するすべてのタスクにキャンセルを要求し、追跡を空にする。受付は開いたままにする。
@@ -143,33 +150,51 @@ public final class ViewTaskStore {
         await tasks.handleToWait(for: run)?.value
     }
 
-    /// この Action ID の実行を追跡しているかどうか。
-    public func isRunning(id: ActionID) -> Bool {
-        runningCount(for: id) > 0
+    /// この Action ID の実行をキャンセル対象として追跡しているかどうか。平均 O(1) で照会する。
+    public func isTracked(id: ActionID) -> Bool {
+        trackedCount(for: id) > 0
     }
 
-    /// 指定した1回の実行を追跡しているかどうか。
-    public func isRunning(_ run: ActionRun) -> Bool {
+    /// 指定した1回の実行をキャンセル対象として追跡しているかどうか。平均 O(1) で照会する。
+    public func isTracked(_ run: ActionRun) -> Bool {
         runs.contains(run)
     }
 
-    /// この寿命ラベルの実行を追跡しているかどうか。
-    public func isRunning(lifetime: ActionLifetime) -> Bool {
-        runs.contains(matching: { $0 == lifetime })
+    /// このグループの実行を追跡しているかどうか。追跡中の実行数に比例する時間で照会する。
+    public func isTracked(group: CancellationGroup) -> Bool {
+        runs.contains(matching: { $0.group == group })
     }
 
-    /// この Action ID の追跡中の実行数。
-    public func runningCount(for id: ActionID) -> Int {
+    /// この Action ID の追跡中の実行数。平均 O(1) で照会する。
+    public func trackedCount(for id: ActionID) -> Int {
         runs.count(for: id)
     }
 
-    /// この寿命ラベルの追跡中の実行数。
-    public func runningCount(lifetime: ActionLifetime) -> Int {
-        runs.count(matching: { $0 == lifetime })
+    /// このグループの追跡中の実行数。追跡中の実行数に比例する時間で照会する。
+    public func trackedCount(group: CancellationGroup) -> Int {
+        runs.count(matching: { $0.group == group })
+    }
+
+    /// キャンセル済みも含む、所有する未終了タスクの総数。平均 O(1) で照会する。
+    public var unfinishedCount: Int {
+        tasks.count
+    }
+
+    /// この Action ID の未終了タスク数。キャンセルで減らず、処理の終了時に減る。
+    /// 平均 O(1) で照会する。
+    public func unfinishedCount(for id: ActionID) -> Int {
+        unfinishedCounts[id] ?? 0
+    }
+
+    /// この Store が所有し、終了を確認していない実行かどうか。平均 O(1) で照会する。
+    public func isUnfinished(_ run: ActionRun) -> Bool {
+        tasks.contains(run)
     }
 
     private func finish(_ run: ActionRun) {
         runs.remove(run)
         tasks.remove(run)
+        let remaining = unfinishedCounts[run.actionID, default: 0] - 1
+        unfinishedCounts[run.actionID] = remaining == 0 ? nil : remaining
     }
 }
