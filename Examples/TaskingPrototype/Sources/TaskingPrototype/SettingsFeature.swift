@@ -29,14 +29,14 @@ public final class SettingsViewModel {
         self.performSave = performSave
     }
 
-    public func save(cancellation: CancellationContext) async throws {
+    public func save() async throws {
+        try Task.checkCancellation()
         let save = UUID()
         latestSave = save
         saveState = .saving
         do {
-            try cancellation.check()
             try await performSave()
-            try cancellation.check()
+            try Task.checkCancellation()
             guard latestSave == save else { return }
             saveState = .saved
         } catch let error as CancellationError {
@@ -62,10 +62,9 @@ public struct SettingsScreen: View {
             Button("保存") {
                 taskStore.start(
                     id: SettingsAction.save,
-                    lifetime: .screenBound,
                     policy: .ignoreNew
-                ) { [viewModel] cancellation in
-                    try await viewModel.save(cancellation: cancellation)
+                ) { [viewModel] in
+                    try await viewModel.save()
                 }
             }
             .disabled(viewModel.saveState == .saving)
@@ -89,7 +88,7 @@ public struct SettingsScreen: View {
             }
         }
         .onDisappear {
-            taskStore.cancel(lifetime: .screenBound)
+            taskStore.cancelAll()
         }
     }
 }

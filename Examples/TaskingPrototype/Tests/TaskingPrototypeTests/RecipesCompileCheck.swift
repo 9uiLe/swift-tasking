@@ -1,90 +1,99 @@
 import Foundation
+import Observation
 import Tasking
 import TaskingCore
 
-/// docs/recipes.md の throws を使う ViewModel・所有・ポリシーの例をコンパイル検証する。
+/// docs/recipes.md の表示状態・受付・所有の例をコンパイル検証する。
 /// アプリケーション依存はスタブで用意し、これらの例は実行しない。
 
-// --- スタブ依存(スニペット外の前提) ---
-
+private struct Plan: Sendable {}
+private struct Catalog: Sendable {}
 private struct SearchResult: Sendable {}
 
-private struct SettingsUseCaseStub: Sendable {
-    func save() async throws {}
-    func sync() async throws {}
+private actor BillingService {
+    func fetchPlans() async throws -> [Plan] { [] }
 }
 
-private struct SyncUseCaseStub: Sendable {
-    func sync() async throws {}
+private actor CatalogService {
+    func fetchCatalog() async throws -> Catalog? { nil }
 }
 
-private struct SearchUseCaseStub: Sendable {
+private actor SearchService {
     func search(_ term: String) async throws -> [SearchResult] { [] }
 }
 
-private struct ProfileUseCaseStub: Sendable {
+private struct SettingsUseCase: Sendable {
     func sync() async throws {}
 }
 
-// キャンセル時に表示状態を復元する。
+private struct ProfileUseCase: Sendable {
+    func sync() async throws {}
+}
+
+private struct SyncUseCase: Sendable {
+    func sync() async throws {}
+}
 
 @MainActor
-private final class RecipeSettingsViewModel {
-    enum SaveState {
+@Observable
+private final class RecipeBillingViewModel {
+    enum State {
         case idle
-        case saving
-        case saved
+        case loading
+        case loaded([Plan])
         case failed(any Error)
     }
 
-    private(set) var saveState: SaveState = .idle
-    private let settingsUseCase = SettingsUseCaseStub()
+    private let service: BillingService
+    private(set) var state: State = .idle
 
-    func save(cancellation: CancellationContext) async throws {
-        saveState = .saving
+    init(service: BillingService) {
+        self.service = service
+    }
+
+    func refresh() async {
+        guard !Task.isCancelled else { return }
+        if case .loading = state { return }
+        let previous = state
+        state = .loading
         do {
-            try cancellation.check()
-            try await settingsUseCase.save()
-            try cancellation.check()
-            saveState = .saved
-        } catch let error as CancellationError {
-            saveState = .idle
-            throw error
+            let plans = try await service.fetchPlans()
+            try Task.checkCancellation()
+            state = .loaded(plans)
+        } catch is CancellationError {
+            state = previous
         } catch {
-            saveState = .failed(error)
+            state = .failed(error)
         }
     }
 }
 
-// 世代で結果反映と後処理を選択する。
-
 @MainActor
+@Observable
 private final class RecipeSearchViewModel {
-    private var latestSearch = UUID()
+    private let service: SearchService
+    @ObservationIgnored private var latestSearch = UUID()
     private(set) var isSearching = false
     private(set) var results: [SearchResult] = []
     private(set) var errorMessage: String?
-    private let searchUseCase = SearchUseCaseStub()
 
-    func search(term: String, cancellation: CancellationContext) async throws {
+    init(service: SearchService) {
+        self.service = service
+    }
+
+    func search(term: String) async throws {
+        try Task.checkCancellation()
         let search = UUID()
         latestSearch = search
         isSearching = true
         errorMessage = nil
-
         defer {
-            if latestSearch == search {
-                isSearching = false
-            }
+            if latestSearch == search { isSearching = false }
         }
-
         do {
-            try cancellation.check()
-            let newResults = try await searchUseCase.search(term)
-            try cancellation.check()
-            if latestSearch == search {
-                results = newResults
-            }
+            let newResults = try await service.search(term)
+            try Task.checkCancellation()
+            if latestSearch == search { results = newResults }
         } catch let error as CancellationError {
             throw error
         } catch {
@@ -93,28 +102,43 @@ private final class RecipeSearchViewModel {
     }
 }
 
-// 完了待ちはキャンセル済みの実行も含む。
+@MainActor
+private final class RecipeCatalogCoordinator {
+    private let runner = ActionRunner()
+    private let service = CatalogService()
+    private(set) var catalog: Catalog?
+
+    func refresh() async throws {
+        let accepted = try await runner.run(id: "catalog.refresh") { [service] in
+            try Task.checkCancellation()
+            let catalog = try await service.fetchCatalog()
+            try Task.checkCancellation()
+            return catalog
+        }
+        if case .some(let value) = accepted {
+            catalog = value
+        }
+    }
+}
+
+@MainActor
+private final class RecipeSettingsViewModel {
+    func save() async throws {}
+}
 
 @MainActor
 private func recipeAwaitCompletion(
-    taskStore: ViewTaskStore,
+    store: ViewTaskStore,
     viewModel: RecipeSettingsViewModel
 ) async {
-    let outcome = taskStore.start(
-        id: "settings.save",
-        lifetime: .screenBound
-    ) { cancellation in
-        try await viewModel.save(cancellation: cancellation)
+    let outcome = store.start(id: "settings.save") {
+        try await viewModel.save()
     }
-    guard case let .started(run) = outcome else {
-        return
-    }
+    guard case let .started(run) = outcome else { return }
 
-    taskStore.cancel(run)
-    await taskStore.awaitCompletion(of: run)
+    store.cancel(run)
+    await store.awaitCompletion(of: run)
 }
-
-// 終了処理は待機前に受付を閉じる。
 
 private actor RecipeSyncCoordinator {
     private let slot = TaskSlot()
@@ -124,21 +148,18 @@ private actor RecipeSyncCoordinator {
     }
 }
 
-// 構造化子タスクは処理の寿命を共有する。
-
 @MainActor
-private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
-    let profileUseCase = ProfileUseCaseStub()
-    let settingsUseCase = SettingsUseCaseStub()
-
+private func recipeInnerConcurrency(store: ViewTaskStore) {
+    let profileUseCase = ProfileUseCase()
+    let settingsUseCase = SettingsUseCase()
     let viewModel = RecipeSyncViewModel()
-    viewTaskStore.start(id: "sync", lifetime: .screenBound) { cancellation in
+    store.start(id: "sync") {
         do {
-            try cancellation.check()
+            try Task.checkCancellation()
             async let profile: Void = profileUseCase.sync()
             async let settings: Void = settingsUseCase.sync()
             _ = try await (profile, settings)
-            try cancellation.check()
+            try Task.checkCancellation()
         } catch is CancellationError {
             return
         } catch {
@@ -149,28 +170,27 @@ private func recipeInnerConcurrency(viewTaskStore: ViewTaskStore) {
 
 @MainActor
 private final class RecipeSyncViewModel {
-    private(set) var failure: ActionFailure?
+    private(set) var failure: (any Error)?
 
     func recordSyncFailure(_ error: any Error) {
-        failure = ActionFailure(error: error)
+        failure = error
     }
 }
 
-// 処理は所有者を弱参照で保持する。
-
 @MainActor
+@Observable
 private final class RecipeStoreOwningViewModel {
     let store = ViewTaskStore()
-    private let syncUseCase = SyncUseCaseStub()
+    private let syncUseCase = SyncUseCase()
     private(set) var isSynced = false
     private(set) var errorMessage: String?
 
     func startSync() {
-        store.start(id: "sync", lifetime: .screenBound) { [weak self, syncUseCase] cancellation in
+        store.start(id: "sync") { [weak self, syncUseCase] in
             do {
-                try cancellation.check()
+                try Task.checkCancellation()
                 try await syncUseCase.sync()
-                try cancellation.check()
+                try Task.checkCancellation()
                 self?.isSynced = true
             } catch let error as CancellationError {
                 throw error
@@ -178,26 +198,5 @@ private final class RecipeStoreOwningViewModel {
                 self?.errorMessage = String(describing: error)
             }
         }
-    }
-}
-
-// Action の識別子とポリシーをまとめて宣言する。
-
-private enum RecipeSettingsAction {
-    static let save: ActionID = "settings.save"
-    static let savePolicy: TaskStartPolicy = .ignoreNew
-}
-
-@MainActor
-private func recipeCentralizedPolicy(
-    viewTaskStore: ViewTaskStore,
-    viewModel: RecipeSettingsViewModel
-) {
-    viewTaskStore.start(
-        id: RecipeSettingsAction.save,
-        lifetime: .screenBound,
-        policy: RecipeSettingsAction.savePolicy
-    ) { cancellation in
-        try await viewModel.save(cancellation: cancellation)
     }
 }

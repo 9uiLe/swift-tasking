@@ -41,14 +41,14 @@ public final class SyncViewModel {
         self.performSync = performSync
     }
 
-    public func sync(cancellation: CancellationContext) async throws {
+    public func sync() async throws {
+        try Task.checkCancellation()
         let sync = UUID()
         latestSync = sync
         syncState = .syncing
         do {
-            try cancellation.check()
             try await performSync()
-            try cancellation.check()
+            try Task.checkCancellation()
             guard latestSync == sync else { return }
             syncState = .finished
         } catch let error as CancellationError {
@@ -75,10 +75,9 @@ public struct SyncSettingsScreen: View {
                 // アプリ寿命の store に登録するので、この画面を閉じても同期は続く。
                 container.store.start(
                     id: SyncAction.fullSync,
-                    lifetime: .appBound,
                     policy: .ignoreNew
-                ) { [viewModel] cancellation in
-                    try await viewModel.sync(cancellation: cancellation)
+                ) { [viewModel] in
+                    try await viewModel.sync()
                 }
             }
             .disabled(viewModel.syncState == .syncing)
@@ -87,7 +86,5 @@ public struct SyncSettingsScreen: View {
                 ProgressView("同期中…")
             }
         }
-        // 注意: ここに onDisappear での cancel は「書かない」ことが仕様。
-        // 画面が消えても appBound の task は生き続ける。
     }
 }

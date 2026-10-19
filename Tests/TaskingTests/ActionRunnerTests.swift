@@ -1,198 +1,157 @@
 import Tasking
-import Testing
 import TaskingTestSupport
+import Testing
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct ActionRunnerTests {
-    @Test func runReturnsSucceededOutcome() async {
+    @Test func successfulResultFinishesTracking() async {
         let runner = ActionRunner()
-
-        let outcome = await runner.run(ActionDescriptor(id: "save")) { _ in
-            "saved"
+        let result = await runner.run(id: "save") {
+            #expect(runner.isTracked(id: "save"))
+            #expect(runner.trackedCount(for: "save") == 1)
+            return "saved"
         }
-
-        #expect(outcome == .succeeded("saved"))
-        #expect(!runner.isRunning(id: "save"))
+        #expect(result == "saved")
+        #expect(!runner.isTracked(id: "save"))
     }
 
-    @Test func reportsStartBeforeAwaitingOperation() async {
-        let runner = ActionRunner()
-        var startedRun: ActionRun?
-
-        let outcome = await runner.run(
-            ActionDescriptor(id: "sync"),
-            onStart: { run in
-                startedRun = run
-                #expect(runner.isRunning(id: run.actionID))
-                #expect(runner.runningCount(for: run.actionID) == 1)
-            },
-            operation: { _ in
-                #expect(startedRun != nil)
-                return "done"
-            }
-        )
-
-        #expect(outcome == .succeeded("done"))
-        #expect(startedRun != nil)
-    }
-
-    @Test func ignoreNewSkipsDuplicateWhileRunning() async {
+    @Test func ignoreNewRejectsDuplicateWithoutExecutingIt() async {
         let runner = ActionRunner()
         let gate = Gate()
-        let started = Checkpoint()
-
-        async let firstOutcome = runner.run(
-            ActionDescriptor(id: "refresh"),
-            onStart: { _ in started.reach() }
-        ) { _ in
+        async let first = runner.run(id: "refresh") {
             await gate.wait()
             return "first"
         }
-
-        await started.wait()
-
-        let secondOutcome = await runner.run(
-            ActionDescriptor(id: "refresh"),
-            onStart: { _ in Issue.record("スキップした実行は開始を通知してはいけません。") }
-        ) { _ in
-            Issue.record("スキップした処理は実行してはいけません。")
-            return "second"
+        await gate.waitForArrivals()
+        let duplicate = await runner.run(id: "refresh") {
+            Issue.record("拒否した処理が実行されました。")
+            return "duplicate"
         }
-
-        #expect(secondOutcome == .skipped(.alreadyRunning))
-
+        #expect(duplicate == nil)
+        #expect(runner.trackedCount(for: "refresh") == 1)
         await gate.open()
-        _ = await firstOutcome
-        #expect(!runner.isRunning(id: "refresh"))
+        #expect(await first == "first")
+        #expect(!runner.isTracked(id: "refresh"))
     }
 
-    @Test func allowsConcurrentRunsWhenRequested() async {
+    @Test func concurrentRunsRemainTrackedUntilEachCompletes() async {
         let runner = ActionRunner()
         let firstGate = Gate()
         let secondGate = Gate()
-
-        async let firstOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
-        ) { _ in
+        async let first = runner.run(id: "refresh", policy: .allowConcurrent) {
             await firstGate.wait()
             return "first"
         }
-
         await firstGate.waitForArrivals()
-
-        async let secondOutcome = runner.run(
-            ActionDescriptor(id: "refresh", duplicatePolicy: .allowConcurrent)
-        ) { _ in
+        async let second = runner.run(id: "refresh", policy: .allowConcurrent) {
             await secondGate.wait()
             return "second"
         }
-
         await secondGate.waitForArrivals()
-        #expect(runner.runningCount(for: "refresh") == 2)
-
+        #expect(runner.trackedCount(for: "refresh") == 2)
         await secondGate.open()
-        #expect(await secondOutcome == .succeeded("second"))
-        #expect(runner.runningCount(for: "refresh") == 1)
+        #expect(await second == "second")
+        #expect(runner.trackedCount(for: "refresh") == 1)
         await firstGate.open()
-        #expect(await firstOutcome == .succeeded("first"))
-        #expect(!runner.isRunning(id: "refresh"))
+        #expect(await first == "first")
+        #expect(!runner.isTracked(id: "refresh"))
     }
 
-    @Test func mapsCancellationErrorToCancelledOutcome() async {
+    @Test func preservesNativeErrorAndReleasesAdmission() async {
         let runner = ActionRunner()
-
-        let outcome = await runner.run(ActionDescriptor(id: "cancel")) { _ in
-            throw CancellationError()
+        do {
+            let _: Int? = try await runner.run(id: "work") { throw SampleError.offline }
+            Issue.record("処理のエラーが送出されませんでした。")
+        } catch {
+            #expect(error as? SampleError == .offline)
         }
-
-        guard case .cancelled = outcome else {
-            Issue.record("キャンセルの結果が必要です。")
-            return
-        }
+        #expect(runner.trackedCount(for: "work") == 0)
+        #expect(await runner.run(id: "work") { 42 } == 42)
     }
 
-    @Test func mapsThrownErrorToFailure() async {
+    @Test func cancellationReachesOperationAndIsRethrown() async {
         let runner = ActionRunner()
-
-        let outcome = await runner.run(ActionDescriptor(id: "fail")) { _ in
-            throw SampleError.offline
-        }
-
-        guard case let .failed(failure) = outcome else {
-            Issue.record("失敗の結果が必要です。")
-            return
-        }
-        #expect(failure.typeName.contains("SampleError"))
-        #expect(failure.message == "offline")
-    }
-
-    @Test func mapsCancellationContextCheckToCancelledOutcome() async {
-        let runner = ActionRunner()
-
-        let task = Task { @MainActor in
-            await runner.run(ActionDescriptor(id: "cancel.context")) { cancellation in
-                try cancellation.check()
+        let gate = Gate()
+        let task = Task {
+            try await runner.run(id: "cancel") {
+                await gate.wait()
+                try Task.checkCancellation()
                 return "finished"
             }
         }
-
+        await gate.waitForArrivals()
         task.cancel()
-
-        let outcome = await task.value
-        #expect(outcome == .cancelled)
-    }
-
-    @Test func recursiveSameActionSkipsButDifferentActionRuns() async {
-        let runner = ActionRunner()
-        let outcome = await runner.run(ActionDescriptor(id: "outer")) { _ in
-            let duplicate = await runner.run(ActionDescriptor(id: "outer")) { _ in 1 }
-            #expect(duplicate == .skipped(.alreadyRunning))
-            let inner = await runner.run(ActionDescriptor(id: "inner")) { _ in 2 }
-            #expect(inner == .succeeded(2))
-            #expect(runner.isRunning(id: "outer"))
-            return 3
+        await gate.open()
+        do {
+            _ = try await task.value
+            Issue.record("キャンセルエラーが送出されませんでした。")
+        } catch {
+            #expect(error is CancellationError)
         }
-        #expect(outcome == .succeeded(3))
-        #expect(!runner.isRunning(id: "outer"))
+        #expect(!runner.isTracked(id: "cancel"))
     }
 
-    @Test(arguments: [false, true])
-    func terminalErrorsReleaseDuplicateAdmission(cancelled: Bool) async {
-        let runner = ActionRunner()
-        let _: ActionOutcome<Int> = await runner.run(ActionDescriptor(id: "work")) { _ in
-            if cancelled { throw CancellationError() }
-            throw SampleError.offline
-        }
-        #expect(runner.runningCount(for: "work") == 0)
-        let next = await runner.run(ActionDescriptor(id: "work")) { _ in 42 }
-        #expect(next == .succeeded(42))
-    }
-
-    @Test func cancellationIsCooperativeAndDoesNotRewriteASuccessfulReturn() async {
+    @Test func cancelledCallerCanReturnASuccessfulResult() async {
         let runner = ActionRunner()
         let task = Task {
-            await runner.run(ActionDescriptor(id: "work")) { c in
-                #expect(c.isCancelled)
+            await runner.run(id: "work") {
+                #expect(Task.isCancelled)
                 return "intentional result"
             }
         }
         task.cancel()
-        #expect(await task.value == .succeeded("intentional result"))
+        #expect(await task.value == "intentional result")
     }
 
-    @available(*, deprecated)
-    @Test func rejectWhileRunningRemainsACompatibilityAlias() {
-        let legacy: ActionDuplicatePolicy = .rejectWhileRunning
+    @Test func recursiveSameActionIsRejectedWhileDifferentActionRuns() async {
+        let runner = ActionRunner()
+        let result = await runner.run(id: "outer") {
+            #expect(await runner.run(id: "outer") { 1 } == nil)
+            #expect(await runner.run(id: "inner") { 2 } == 2)
+            #expect(runner.isTracked(id: "outer"))
+            return 3
+        }
+        #expect(result == 3)
+        #expect(!runner.isTracked(id: "outer"))
+    }
 
-        #expect(legacy == .ignoreNew)
+    @Test func optionalSuccessIsDistinctFromRejectedAdmission() async {
+        let runner = ActionRunner()
+        let gate = Gate()
+        async let first: Int?? = runner.run(id: "optional") {
+            await gate.wait()
+            return Optional<Int>.none
+        }
+        await gate.waitForArrivals()
+        let rejected: Int?? = await runner.run(id: "optional") { nil }
+        guard case .none = rejected else {
+            Issue.record("受付拒否が外側の nil になりませんでした。")
+            await gate.open()
+            _ = await first
+            return
+        }
+        await gate.open()
+        guard case .some(.none) = await first else {
+            Issue.record("成功した nil を受付拒否と区別できませんでした。")
+            return
+        }
+    }
+
+    @Test func resultAndOperationStateCanRemainNonSendableOnMainActor() async {
+        let runner = ActionRunner()
+        let value = LocalValue()
+        let result = await runner.run(id: "local") {
+            value.count += 1
+            return value
+        }
+        #expect(result === value)
+        #expect(value.count == 1)
     }
 }
 
-private enum SampleError: Error, CustomStringConvertible {
-    case offline
+private enum SampleError: Error, Equatable { case offline }
 
-    var description: String {
-        "offline"
-    }
+private final class LocalValue {
+    var count = 0
 }

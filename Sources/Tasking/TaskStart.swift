@@ -1,12 +1,7 @@
-/// `ViewTaskStore` が所有するタスクの論理的な寿命。
+/// `ViewTaskStore` の追跡中の実行から、キャンセル対象を選ぶ任意のラベル。
 ///
-/// 組み込み値は一般的な UI の所有スコープを表す。
-/// `"accountSettings"` のような機能固有のスコープも定義できる。
-public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
-    public static let screenBound = ActionLifetime("screenBound")
-    public static let sceneBound = ActionLifetime("sceneBound")
-    public static let appBound = ActionLifetime("appBound")
-
+/// ラベルは寿命を制御しない。所有者が Store を保持し、終了時にキャンセルする。
+public struct CancellationGroup: Hashable, Sendable, RawRepresentable, ExpressibleByStringLiteral, CustomStringConvertible {
     public let rawValue: String
 
     public init(_ rawValue: String) {
@@ -26,15 +21,15 @@ public struct ActionLifetime: Hashable, Sendable, RawRepresentable, ExpressibleB
     }
 }
 
-/// 同じ `ActionID` のタスクを追跡している場合の開始ポリシー。
+/// 同じ `ActionID` の未終了タスクがある場合の受付方針。
 public enum TaskStartPolicy: Equatable, Sendable {
-    /// 既存のタスクを継続し、新しい要求をスキップする。
+    /// キャンセル済みも含め、先に受け付けた処理が終了するまで新しい要求を受け付けない。
     case ignoreNew
 
     /// 同じ Action として追跡中のタスクをキャンセルし、新しい要求を開始する。
     ///
     /// キャンセルは協調的に行われる。古い処理がキャンセルを無視した場合、
-    /// Store が重複判定の対象から外した後も実行が続くことがある。
+    /// Store が追跡から外した後も実行が続き、未終了件数には残る。
     case cancelExisting
 
     /// 同じ Action ID のタスクを追加で開始する。
@@ -43,7 +38,8 @@ public enum TaskStartPolicy: Equatable, Sendable {
 
 /// Store が処理の開始を受け付けなかった理由。
 public enum TaskStartSkipReason: Equatable, Sendable {
-    case alreadyRunning
+    /// 同じ Action ID に、キャンセル済みも含む未終了の処理がある。
+    case unfinished
     case closed
 }
 

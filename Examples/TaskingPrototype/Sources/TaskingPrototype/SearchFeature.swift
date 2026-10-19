@@ -1,9 +1,25 @@
 import SwiftUI
-import Tasking
 
-/// 検索は前の処理を差し替え、ViewModel が結果の反映を保護する。
-enum SearchAction {
-    static let query = ActionID("search.query")
+/// 同期的な絞り込みを MainActor から分離し、検索結果だけを画面へ返す。
+public actor SearchIndex {
+    private let entries: [String]
+
+    public init(entries: [String] = [
+        "Swift Concurrency", "Structured Concurrency", "Actor", "Task", "Cancellation"
+    ]) {
+        self.entries = entries
+    }
+
+    public func search(_ term: String) throws -> [String] {
+        var matches: [String] = []
+        for entry in entries {
+            try Task.checkCancellation()
+            if entry.localizedCaseInsensitiveContains(term) {
+                matches.append(entry)
+            }
+        }
+        return matches
+    }
 }
 
 @MainActor
@@ -11,34 +27,44 @@ enum SearchAction {
 public final class SearchViewModel {
     public private(set) var results: [String] = []
     public private(set) var isSearching = false
-
-    @ObservationIgnored private var latestSearch = UUID()
     public private(set) var errorMessage: String?
 
+    @ObservationIgnored private var latestSearch = UUID()
     private let performSearch: @MainActor @Sendable (String) async throws -> [String]
 
+    public convenience init() {
+        let index = SearchIndex()
+        self.init(performSearch: { term in try await index.search(term) })
+    }
+
     public init(
-        performSearch: @MainActor @Sendable @escaping (String) async throws -> [String] = { term in
-            try await Task.sleep(for: .milliseconds(300))
-            return ["\(term) の結果 1", "\(term) の結果 2"]
-        }
+        performSearch: @MainActor @Sendable @escaping (String) async throws -> [String]
     ) {
         self.performSearch = performSearch
     }
 
-    public func search(term: String, cancellation: CancellationContext) async throws {
+    /// 空文字では結果を消去する。待機中の要求は検索を始めずにキャンセルできる。
+    /// 古い要求の完了は、最新要求の結果・エラー・処理中表示を変更しない。
+    public func search(term: String, debounce: Duration = .zero) async throws {
+        try Task.checkCancellation()
         let search = UUID()
         latestSearch = search
-        isSearching = true
         errorMessage = nil
+        guard !term.isEmpty else {
+            results = []
+            isSearching = false
+            return
+        }
+
+        isSearching = true
         defer {
             if latestSearch == search { isSearching = false }
         }
 
         do {
-            try cancellation.check()
+            if debounce > .zero { try await Task.sleep(for: debounce) }
             let found = try await performSearch(term)
-            try cancellation.check()
+            try Task.checkCancellation()
             guard latestSearch == search else { return }
             results = found
         } catch let error as CancellationError {
@@ -51,7 +77,6 @@ public final class SearchViewModel {
 }
 
 public struct SearchScreen: View {
-    @State private var taskStore = ViewTaskStore()
     private let viewModel: SearchViewModel
     @State private var term = ""
 
@@ -62,15 +87,6 @@ public struct SearchScreen: View {
     public var body: some View {
         List {
             TextField("検索", text: $term)
-                .onChange(of: term) { _, newTerm in
-                    taskStore.start(
-                        id: SearchAction.query,
-                        lifetime: .screenBound,
-                        policy: .cancelExisting
-                    ) { [viewModel] cancellation in
-                        try await viewModel.search(term: newTerm, cancellation: cancellation)
-                    }
-                }
 
             if viewModel.isSearching {
                 ProgressView()
@@ -84,8 +100,8 @@ public struct SearchScreen: View {
                 Text(result)
             }
         }
-        .onDisappear {
-            taskStore.cancel(lifetime: .screenBound)
+        .task(id: term) { [term] in
+            try? await viewModel.search(term: term, debounce: .milliseconds(250))
         }
     }
 }

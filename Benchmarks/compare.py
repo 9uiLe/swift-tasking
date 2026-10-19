@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import re
 import json
+import math
 import platform
 import shutil
 import statistics
@@ -45,7 +46,7 @@ def main():
     source.add_argument("--baseline-path", type=Path, help="比較元のソースディレクトリ")
     parser.add_argument("--output", required=True, type=Path, help="測定結果の保存先")
     parser.add_argument("--samples", default=7, type=int, help="測定回数")
-    parser.add_argument("--sizes", default="100,1000,10000", help="測定する実行数（カンマ区切り）")
+    parser.add_argument("--sizes", default="1,8,32,128,1000,10000", help="測定する実行数（カンマ区切り）")
     parser.add_argument("--queries", default=1000, type=int, help="Store の1バッチあたりの照会回数")
     args = parser.parse_args()
     if args.samples <= 0 or args.queries <= 0:
@@ -93,7 +94,8 @@ def main():
             order = ["baseline", "working"] if sample % 2 == 0 else ["working", "baseline"]
             for name in order:
                 result = run(["/usr/bin/time", "-l", str(binaries[name]), "--samples", "1",
-                              "--sizes", args.sizes, "--queries", str(args.queries)],
+                              "--sizes", args.sizes, "--queries", str(args.queries),
+                              "--order", "tasking-first" if sample % 2 == 0 else "native-first"],
                              capture_output=True, timeout=180)
                 match = re.search(r"(\d+)\s+maximum resident set size", result.stderr)
                 if not match:
@@ -109,14 +111,18 @@ def main():
     (args.output / "memory.json").write_text(json.dumps(memory, indent=2) + "\n")
     grouped = {}
     for row in rows:
-        key = (row["scenario"], row["metric"], row["size"], row["operations"])
-        grouped.setdefault(key, {}).setdefault(row["build"], []).append(row["milliseconds"])
+        if not math.isfinite(row["value"]):
+            raise RuntimeError("有限数値でない測定値です")
+        key = (row["scenario"], row["metric"], row["size"], row["operations"], row["unit"])
+        grouped.setdefault(key, {}).setdefault(row["build"], []).append(row["value"])
     summary = []
-    for (scenario, metric, size, operations), values in sorted(grouped.items()):
+    for (scenario, metric, size, operations, unit), values in sorted(grouped.items()):
+        if set(values) != {"baseline", "working"} or any(len(v) != args.samples for v in values.values()):
+            raise RuntimeError("両ソースの測定条件またはサンプル数が一致しません")
         medians = {name: statistics.median(samples) for name, samples in values.items()}
-        summary.append(dict(scenario=scenario, metric=metric, size=size, operations=operations,
-                            baseline_ms=medians["baseline"], working_ms=medians["working"],
-                            ratio=medians["working"] / medians["baseline"]))
+        summary.append(dict(scenario=scenario, metric=metric, size=size, operations=operations, unit=unit,
+                            baseline=medians["baseline"], working=medians["working"],
+                            ratio=medians["working"] / medians["baseline"] if medians["baseline"] else None))
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
 

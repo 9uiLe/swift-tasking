@@ -28,6 +28,12 @@ package struct OwnedTasks<Key: Hashable & Sendable>: Sendable {
 
     package init() {}
 
+    package var count: Int { entries.count }
+
+    package func contains(_ key: Key) -> Bool {
+        entries[key] != nil
+    }
+
     package mutating func insert(
         _ handle: Task<Void, Never>, for key: Key, ownership: TaskOwnership
     ) {

@@ -1,54 +1,44 @@
-/// 呼び出し元の既存の async コンテキストで実行しながら Action を追跡する。
+/// 呼び出し元の既存の async コンテキストで、Action ID ごとの重複受付を制御する。
 ///
-/// `ActionRunner` はタスクを作成・所有しない。async コンテキスト内で、
-/// 重複制御と型付きの終了結果が必要な場合に使う。
-/// 非構造化タスクのハンドルの所有には `ViewTaskStore` を使う。
+/// タスクは作成・所有せず、キャンセル状態と送出されたエラーをそのまま処理へ渡す。
+/// UI の読み込み状態や結果は呼び出し側が所有する。
 @MainActor
 public final class ActionRunner {
-    private var runs = ActionRuns<Void>()
+    private var counts: [ActionID: Int] = [:]
 
     public init() {}
 
-    /// 実行を受け付け、追跡中に `onStart` を呼び、処理の終了を待つ。
-    /// スキップした場合はどちらのクロージャも呼ばない。すべての終了結果で追跡を除く。
-    /// キャンセルは協調的に行われ、送出された `CancellationError` だけを `.cancelled` に変換する。
-    /// 値が返された場合は、キャンセルが要求されていても `.succeeded` になる。
-    public func run<Success: Sendable>(
-        _ descriptor: ActionDescriptor,
-        onStart: @MainActor (ActionRun) -> Void = { _ in },
-        operation: @MainActor @Sendable (CancellationContext) async throws -> Success
-    ) async -> ActionOutcome<Success> {
-        if descriptor.duplicatePolicy == .ignoreNew, isRunning(id: descriptor.id) {
-            return .skipped(.alreadyRunning)
+    /// 受け付けた処理の結果を `.some` で返し、重複で拒否した場合は `nil` を返す。
+    ///
+    /// 処理の戻り値が Optional でも、成功した `nil` は `.some(nil)` となり、受付拒否と区別できる。
+    /// 処理が送出したエラーは、`CancellationError` を含め変換せず再送出する。
+    /// 追跡は処理の呼び出し前に開始し、成功・失敗・キャンセルのいずれでも終了時に除去する。
+    public func run<Success>(
+        id: ActionID,
+        policy: ActionDuplicatePolicy = .ignoreNew,
+        operation: @MainActor () async throws -> Success
+    ) async rethrows -> Success? {
+        if policy == .ignoreNew, isTracked(id: id) {
+            return nil
         }
 
-        let run = ActionRun(actionID: descriptor.id)
-        runs.insert(run, metadata: ())
-        defer { runs.remove(run) }
-        onStart(run)
-
-        do {
-            return .succeeded(try await operation(CancellationContext()))
-        } catch is CancellationError {
-            return .cancelled
-        } catch {
-            return .failed(ActionFailure(error: error))
+        counts[id, default: 0] += 1
+        defer {
+            let remaining = counts[id, default: 0] - 1
+            counts[id] = remaining == 0 ? nil : remaining
         }
+        return .some(try await operation())
     }
 
-    /// 指定した Action ID の実行を追跡しているかどうかを返す。
-    ///
-    /// 同期的な照会であり、`ActionRunner` は Observable ではないため SwiftUI の再描画を起こさない。
-    /// 読み込み表示などの UI 状態は ViewModel 自身の状態として所有する。
-    public func isRunning(id: ActionID) -> Bool {
-        runningCount(for: id) > 0
+    /// この Action ID で受け付けた処理が終了していないかどうか。平均 O(1) で照会する。
+    /// 同期的なスナップショットであり、SwiftUI の再描画は起こさない。
+    public func isTracked(id: ActionID) -> Bool {
+        trackedCount(for: id) > 0
     }
 
-    /// 指定した Action ID の追跡中の実行数を返す。
-    ///
-    /// 同期的な照会であり、`ActionRunner` は Observable ではないため SwiftUI の再描画を起こさない。
-    /// 読み込み表示などの UI 状態は ViewModel 自身の状態として所有する。
-    public func runningCount(for id: ActionID) -> Int {
-        runs.count(for: id)
+    /// この Action ID で受け付けた未終了の処理数。平均 O(1) で照会する。
+    /// 同期的なスナップショットであり、SwiftUI の再描画は起こさない。
+    public func trackedCount(for id: ActionID) -> Int {
+        counts[id] ?? 0
     }
 }

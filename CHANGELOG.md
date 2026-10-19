@@ -5,6 +5,32 @@
 
 ## [Unreleased]
 
+### 変更
+
+- **破壊的変更:** `CancellationContext` を削除。Store・Runner・Slot の処理本体は引数なしにし、
+  標準の `Task.checkCancellation()` / `Task.isCancelled` を使う。利用側の async メソッドからキャンセル引数を除く。
+- **破壊的変更:** `ActionLifetime` と組込みの寿命ラベルを削除し、任意の文字列を持つ `CancellationGroup` へ変更。
+  通常は寿命の所有者ごとに Store を保持し、終了イベントから `cancelAll()` を呼ぶ。
+  部分集合のキャンセルが必要な場合だけ `lifetime:` を `group:` に移し、独自のグループを宣言する。
+- **破壊的変更:** Store の既定 `.ignoreNew` はキャンセル済みも含む同じ ActionID の未終了処理を拒否する。
+  拒否理由の `.alreadyRunning` は `.unfinished` へ変更。旧処理の実終了を待たず差し替える必要があれば `.cancelExisting` を明示する。
+- **破壊的変更:** 追跡照会の `isRunning` / `runningCount` を `isTracked` / `trackedCount` へ変更。
+  Runner の照会は `isTracked(id:)` を使う。Store にはキャンセル済みも含む `unfinishedCount`、
+  `unfinishedCount(for:)`、`isUnfinished(_:)` を追加し、追跡解除と実終了を区別する。
+- **破壊的変更:** `ActionRunner.run(id:policy:operation:)` は呼び出し元のタスクで実行する `async rethrows -> Success?` に変更。
+  スキップは外側の `nil`、受理した戻り値は `.some(value)`、エラーと `CancellationError` は元の型のまま送出する。
+  `ActionDescriptor`・`ActionOutcome`・`ActionSkipReason`・`ActionFailure`・`onStart` を削除。
+  Runner の結果 switch を Optional の受付判定と通常の `do` / `catch` へ置き換える。成功値の `Sendable` 制約は不要となる。
+  非推奨だった `ActionDuplicatePolicy.rejectWhileRunning` も削除したため、`.ignoreNew` を使う。
+- **破壊的変更:** Store の `onUnhandledError` は `ActionFailure` の代わりに元の `any Error` を渡す。
+  診断側は必要に応じて元のエラー型や `String(describing:)` を使う。
+- 検索例は標準 `.task(id:)` と入力のデバウンスを使い、検索計算を専用 actor に分離。
+  課金情報の例は通常の async と状態ガードを使う。画面を越える同期と同期イベントの所有で Store の用途を示す。
+- 標準の手書き所有器・状態ガードとの Release 比較、受付から開始までの遅延、キャンセル後の未終了件数、
+  MainActor の同期受付時間を測定する。`Benchmarks/record.py` で独立プロセスの結果と最大 RSS を保存できる。
+- 現行の契約・設計根拠・運用を正式文書へ統合し、個別の設計判断記録を削除。
+  変更固有の経緯は Git 履歴、現在の設計はアーキテクチャと各責務の文書で確認できる。
+
 ## [0.4.0] - 2026-09-16
 
 ### 追加
